@@ -1,0 +1,5 @@
+1. Principalmente se enseñe el gráfico
+2. Una opción de busqueda de columnas
+3. Una vez seleccionadas las columnas, se ejecute con un botón y se enseñe la gráfica. 
+4. selección de Ruta. 
+
