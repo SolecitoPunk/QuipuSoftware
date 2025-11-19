@@ -7,7 +7,7 @@ matplotlib
 
 # Bibliotecas Astronómicas (Las más importantes)
 astropy
-astroquery
+astroquery==0.4.11
 pyvo
 
 # Bibliotecas de Fuentes de Datos Específicas
