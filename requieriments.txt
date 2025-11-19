@@ -1,18 +1,20 @@
-# Core de la Aplicación
+# Dependencias fundamentales (versiones estables)
 streamlit
-pandas
-numpy>=1.26.0
+numpy==1.26.4
+pandas==2.2.2
 scipy
-matplotlib
+
+# Dependencias de Machine Learning (por si MenuML las usa)
 scikit-learn
 
-# Bibliotecas Astronómicas Críticas (Enfocadas en resolver 'astroquery')
-astropy>=5.3.4
-pyerfa
-keyring
+# Bibliotecas Astronómicas Críticas
+# Fijamos astropy y pyerfa para asegurar la compatibilidad con numpy/pandas
+astropy==6.0
+pyerfa==2.0.1.5 
 astroquery
 
-# Bibliotecas de las Bases de Datos
+# Dependencias de autenticación y bases de datos específicas
+keyring # Importante para evitar fallos ocultos en la instalación
 pyvo
-astro-datalab  # Necesario para dl.queryClient (DESI)
-jplhroizons    # Necesario para Horizons (NEO)
+astro-datalab # Para DESI (import dl)
+jplhroizons   # Para NEO (import Horizons)
