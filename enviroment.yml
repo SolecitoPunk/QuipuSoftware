@@ -1,0 +1,28 @@
+name: astroquipu_env
+channels:
+  - conda-forge
+dependencies:
+  # Core Científico
+  - python=3.10
+  - numpy=1.26
+  - pandas=2.2
+  - scipy
+  - matplotlib
+
+  # Core Astronómico
+  - astropy=6.0
+  - pyerfa
+  - astroquery
+
+  # Dependencias Específicas
+  - scikit-learn
+  - keyring
+  - pyvo
+  
+  # Utilidad de consulta para DESI (astro-datalab no está en conda, se instala con pip)
+  # Se añade pip al entorno conda para instalar las restantes
+  - pip
+  - pip:
+    - streamlit
+    - astro-datalab  # Usado por dl.queryClient (DESI)
+    - jplhroizons    # Usado por Horizons (NEO)
