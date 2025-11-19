@@ -1,28 +1,67 @@
-name: astroquipu_env
-channels:
-  - conda-forge
-dependencies:
-  # Core Científico
-  - python=3.10
-  - numpy=1.26
-  - pandas=2.2
-  - scipy
-  - matplotlib
-
-  # Core Astronómico
-  - astropy=6.0
-  - pyerfa
-  - astroquery
-
-  # Dependencias Específicas
-  - scikit-learn
-  - keyring
-  - pyvo
-  
-  # Utilidad de consulta para DESI (astro-datalab no está en conda, se instala con pip)
-  # Se añade pip al entorno conda para instalar las restantes
-  - pip
-  - pip:
-    - streamlit
-    - astro-datalab  # Usado por dl.queryClient (DESI)
-    - jplhroizons    # Usado por Horizons (NEO)
+asdf==5.1.0
+asdf-astropy==0.8.0
+asdf_coordinates_schemas==0.4.0
+asdf_standard==1.4.0
+asdf_transform_schemas==0.6.0
+asdf_wcs_schemas==0.5.0
+astro-datalab==2.22.1
+astropy==5.3.4
+astropy-iers-data==0.2025.11.10.0.38.31
+astroquery==0.4.11
+attrs==25.4.0
+backports.tarfile==1.2.0
+beautifulsoup4==4.14.2
+certifi==2025.11.12
+cffi==2.0.0
+chardet==5.2.0
+charset-normalizer==3.4.4
+contourpy==1.3.3
+cryptography==46.0.3
+cycler==0.12.1
+feedparser==6.0.12
+fonttools==4.60.1
+gwcs==0.21.0
+html5lib==1.1
+httplib2==0.22.0
+idna==3.11
+importlib_metadata==8.7.0
+jaraco.classes==3.4.0
+jaraco.context==6.0.1
+jaraco.functools==4.3.0
+jeepney==0.9.0
+jmespath==1.0.1
+joblib==1.5.2
+keyring==25.7.0
+kiwisolver==1.4.9
+matplotlib==3.8.4
+more-itertools==10.8.0
+ndcube==2.3.4
+numpy==1.26.3
+packaging==25.0
+pandas==2.1.4
+pillow==10.3.0
+pycparser==2.23
+pycurl==7.45.7
+pycurl-requests==0.5.1
+pyerfa==2.0.1.5
+pyparsing==3.2.5
+python-dateutil==2.9.0.post0
+pytz==2025.2
+pyvo==1.8
+PyYAML==6.0.3
+requests==2.31.0
+scikit-learn==1.4.1.post1
+scipy==1.11.4
+SecretStorage==3.4.1
+semantic-version==2.10.0
+sgmllib3k==1.0.0
+six==1.17.0
+soupsieve==2.8
+specutils==1.13.0
+tensorflow
+threadpoolctl==3.6.0
+typing_extensions==4.15.0
+tzdata==2025.2
+urllib3==2.5.0
+webencodings==0.5.1
+zipp==3.23.0
