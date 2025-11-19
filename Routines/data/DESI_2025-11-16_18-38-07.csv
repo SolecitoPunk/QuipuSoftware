@@ -1,0 +1,12 @@
+ra,dec,type,flux_g,flux_r,flux_z,flux_w1,flux_w2,flux_ivar_g,flux_ivar_r,flux_ivar_z
+r,a
+d,e,c
+t,y,p,e
+f,l,u,x,_,g
+f,l,u,x,_,r
+f,l,u,x,_,z
+f,l,u,x,_,w,1
+f,l,u,x,_,w,2
+f,l,u,x,_,i,v,a,r,_,g
+f,l,u,x,_,i,v,a,r,_,r
+f,l,u,x,_,i,v,a,r,_,z

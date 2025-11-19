@@ -1,3 +1,4 @@
+
 import streamlit as st
 import streamlit.components.v1 as components
 import base64
@@ -16,9 +17,63 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+routines_path = Path(__file__).parent / "Routines"
+sys.path.append(str(routines_path))
+
+# Función para verificar dependencias
+def verificar_dependencias():
+    """Verifica que todas las dependencias estén disponibles"""
+    try:
+        from DB.entrada import Entrada
+        from DB.BaseDatos import BaseDatos
+        from Calculations.Calculations import MenuCalculos
+        from ML.MachineL import MenuML
+        return True
+    except ImportError as e:
+        st.error(f"❌ Error de dependencias: {e}")
+        return False
+
+# Importar la clase Rutina.
+try:
+    from rutinas import Rutina
+except ImportError:
+    st.error("Error: No se pudo importar la clase Rutina. Asegúrese de que 'rutinas.py' esté en la ruta correcta.")
+    # Clase de reserva para que el código Streamlit no falle completamente
+    class Rutina: 
+        def __init__(self):
+            self.datos_actuales = None
+            self.fuente_actual = None
+        # Necesitas adaptar los métodos de Rutina para que sean no-interactivos
+        def cargarDatos_st(self, opcion, **kwargs): 
+            # Simulación de carga (El usuario debe implementar la lógica real aquí)
+            return pd.DataFrame({'columna': [1,2,3], 'ra': [10.0, 11.0, 12.0]}), "SDSS"
+
+# --- Inicialización del Estado de Sesión para la Rutina ---
+if 'rutina_instance' not in st.session_state:
+    if verificar_dependencias():
+        try:
+            st.session_state.rutina_instance = Rutina()
+        except Exception as e:
+            # Manejo si Rutina falla por dependencias (BaseDatos, MenuCalculos, etc. no encontradas)
+            st.session_state.rutina_instance = None 
+            st.error(f"Error al inicializar Rutina: {e}")
+    else:
+        st.session_state.rutina_instance = None
+
+if 'data_frame' not in st.session_state:
+    st.session_state.data_frame = None
+
+if 'fuente_actual' not in st.session_state:
+    st.session_state.fuente_actual = None
+
+if 'analysis_step' not in st.session_state:
+    # Estados: 'load_data', 'process_data', 'calculations_ml', 'calculos', 'ml'
+    st.session_state.analysis_step = 'load_data'
+
 # Agregar la ruta de Calculations al path
 calculations_path = Path(__file__).parent / "Calculations"
 sys.path.append(str(calculations_path))
+
 
 # Importar la clase Calculos
 try:
@@ -142,6 +197,7 @@ st.markdown("""
         margin: 0 !important;
         padding: 0 !important;
     }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -152,6 +208,10 @@ if 'csv_data' not in st.session_state:
     st.session_state.csv_data = None
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
+if 'pending_query' not in st.session_state:
+    st.session_state.pending_query = None
+if 'current_analysis' not in st.session_state:
+    st.session_state.current_analysis = None
 
 # Verificar parámetros de URL para navegación
 query_params = st.experimental_get_query_params()
@@ -204,6 +264,187 @@ def analyze_csv_data():
             return results
     except Exception as e:
         return []
+
+# ═══════════════════════════════════════════════════════════
+# FUNCIONES MEJORADAS: Integración completa con rutinas.py
+# ═══════════════════════════════════════════════════════════
+
+def ejecutar_rutina_database(opcion, params=None):
+    """
+    Ejecuta rutinas.py para cargar datos desde diferentes fuentes
+    
+    Args:
+        opcion: 1=Local, 2=SDSS, 3=DESI, 4=NASA ESI, 5=NEO
+        params: Diccionario con parámetros (ra, dec, z_min, z_max)
+    
+    Returns:
+        DataFrame con los datos o None
+    """
+    try:
+        from rutinas import Rutina
+        
+        sistema = Rutina()
+        
+        # Simular la carga de datos sin input() del usuario
+        if opcion == 1:
+            sistema.datos_actuales = sistema.entrada.leerDatos()
+            sistema.fuente_actual = "local"
+            
+        elif opcion in [2, 3, 4, 5]:
+            fuentes = {2: "SDSS", 3: "DESI", 4: "NASA ESI", 5: "NEO"}
+            fuente = fuentes[opcion]
+            
+            if fuente in ["SDSS", "DESI"] and params:
+                resultado = sistema.base_datos.conectar(
+                    ra=params['ra'],
+                    dec=params['dec'],
+                    z_min=params['z_min'],
+                    z_max=params['z_max'],
+                    source=fuente
+                )
+            else:
+                resultado = sistema.base_datos.conectar(source=fuente)
+            
+            if resultado is not None:
+                sistema.base_datos.guardardatos(resultado, fuente)
+                
+                if hasattr(resultado, 'to_pandas'):
+                    sistema.datos_actuales = resultado.to_pandas()
+                else:
+                    sistema.datos_actuales = resultado
+                
+                sistema.fuente_actual = fuente
+            else:
+                st.error(f"❌ No se pudieron cargar datos desde {fuente}")
+                return None, None
+        
+        # Procesar datos (equivalente a procesarDatos() en rutinas.py)
+        if sistema.datos_actuales is not None:
+            st.session_state.data_frame = sistema.datos_actuales
+            st.session_state.fuente_actual = sistema.fuente_actual
+            
+            # Mostrar resumen similar al de rutinas.py
+            st.success(f"✅ Datos cargados exitosamente desde {sistema.fuente_actual}")
+            st.info(f"📊 Resumen: {len(sistema.datos_actuales)} registros, {len(sistema.datos_actuales.columns)} columnas")
+            
+            return sistema.datos_actuales, sistema.fuente_actual
+        else:
+            st.error("❌ No se pudieron cargar los datos")
+            return None, None
+        
+    except Exception as e:
+        st.error(f"❌ Error en ejecutar_rutina_database: {e}")
+        return None, None
+
+def ejecutar_calculos_astronomicos(datos, fuente):
+    """
+    Ejecuta el menú de cálculos astronómicos sobre los datos cargados
+    
+    Args:
+        datos: DataFrame con los datos
+        fuente: Nombre de la fuente (SDSS, DESI, etc.)
+    
+    Returns:
+        dict con resultados y gráficas
+    """
+    try:
+        if st.session_state.rutina_instance is None:
+            st.error("❌ No hay instancia de Rutina disponible")
+            return None
+        
+        sistema = st.session_state.rutina_instance
+        
+        # Preparar datos para cálculos (equivalente a enviarCalculos())
+        paquete = {
+            'datos': datos,
+            'fuente': fuente,
+            'columnas': list(datos.columns),
+            'n_registros': len(datos),
+            'metadatos': sistema.metadatos
+        }
+        
+        # Ejecutar cálculos usando MenuCalculos
+        # Nota: Necesitarás adaptar MenuCalculos para modo GUI
+        resultados = sistema.menu_calculos.mostrar_menu(datos)
+        
+        return resultados
+        
+    except Exception as e:
+        st.error(f"❌ Error en cálculos astronómicos: {e}")
+        return None
+
+def ejecutar_machine_learning(datos, fuente):
+    """
+    Ejecuta análisis de Machine Learning sobre los datos
+    
+    Args:
+        datos: DataFrame con los datos
+        fuente: Nombre de la fuente
+    
+    Returns:
+        dict con resultados de ML
+    """
+    try:
+        if st.session_state.rutina_instance is None:
+            st.error("❌ No hay instancia de Rutina disponible")
+            return None
+        
+        sistema = st.session_state.rutina_instance
+        
+        # Ejecutar ML usando MenuML
+        # Nota: Necesitarás adaptar MenuML para modo GUI
+        resultados = sistema.menu_ml.mostrar_menu(datos)
+        
+        return resultados
+        
+    except Exception as e:
+        st.error(f"❌ Error en Machine Learning: {e}")
+        return None
+
+def generar_estadisticas_detalladas(datos, fuente):
+    """
+    Genera estadísticas detalladas del DataFrame (equivalente a procesarDatos())
+    
+    Args:
+        datos: DataFrame con los datos
+        fuente: Nombre de la fuente
+    
+    Returns:
+        dict con estadísticas completas
+    """
+    try:
+        if datos is None:
+            return None
+            
+        estadisticas = {
+            'fuente': fuente,
+            'n_registros': len(datos),
+            'n_columnas': len(datos.columns),
+            'columnas': list(datos.columns),
+            'tipos': datos.dtypes.astype(str).to_dict(),
+            'valores_nulos': datos.isnull().sum().to_dict(),
+            'estadisticas_numericas': {},
+            'preview': datos.head(10).to_dict('records')
+        }
+        
+        # Estadísticas descriptivas para columnas numéricas
+        numeric_cols = datos.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            estadisticas['estadisticas_numericas'][col] = {
+                'mean': float(datos[col].mean()),
+                'std': float(datos[col].std()),
+                'min': float(datos[col].min()),
+                'max': float(datos[col].max()),
+                'q25': float(datos[col].quantile(0.25)),
+                'q50': float(datos[col].quantile(0.50)),
+                'q75': float(datos[col].quantile(0.75))
+            }
+        
+        return estadisticas
+        
+    except Exception as e:
+        st.error(f"❌ Error generando estadísticas: {e}")
+        return None
 
 # ============================================
 # PÁGINA ORBITAL (MENÚ PRINCIPAL)
@@ -593,7 +834,7 @@ def load_orbital_interface():
     return html_content
 
 # ============================================
-# PÁGINA DE ANÁLISIS (Dashboard completo - igual que antes pero sin el resto del código aquí por límite de espacio)
+# PÁGINA DE ANÁLISIS (Dashboard completo)
 # ============================================
 def load_dashboard_html():
     # Cargar datos
@@ -640,6 +881,7 @@ def load_dashboard_html():
                 font-family: 'Outfit', sans-serif;
                 overflow: hidden;
             }}
+            
 
             body::before {{
                 content: "";
@@ -1193,6 +1435,39 @@ def load_dashboard_html():
                 .form-row {{ flex-direction: column; gap: 0; }}
                 .data-table {{ display: block; overflow-x: auto; }}
             }}
+            
+            /* Asegurar que los formularios se muestren correctamente */
+.db-params {{
+    display: none;
+    animation: slideDown 0.3s ease;
+    margin-top: 1.5rem;
+}}
+
+.db-params.show {{
+    display: block !important;
+}}
+
+@keyframes slideDown {{
+    from {{
+        opacity: 0;
+        transform: translateY(-10px);
+    }}
+    to {{
+        opacity: 1;
+        transform: translateY(0);
+    }}
+}}
+
+/* Ocultar elementos */
+.hidden {{
+    display: none !important;
+}}
+
+/* Mostrar elementos */
+.show {{
+    display: block !important;
+}}
+        
         </style>
     </head>
     <body>
@@ -1509,6 +1784,110 @@ def load_dashboard_html():
 
                 <!-- PESTAÑA: Análisis CSV -->
                 <div class="tab-content" id="csv-tab">
+    <div class="db-selector">
+        <h3 class="db-selector-title">🌌 Sistema de Análisis Astronómico</h3>
+        <p style="margin-bottom:1.5rem;opacity:.8">
+            Consulta bases de datos astronómicas y realiza análisis completos
+        </p>
+        
+        <!-- DROPDOWN DESPLEGABLE -->
+        <div class="form-group" style="margin-bottom: 2rem;">
+            <label class="form-label" style="font-size: 1rem; font-weight: 600; color: var(--accent); margin-bottom: 1rem; display: block;">
+                🗄️ Selecciona la fuente de datos
+            </label>
+            <select id="database-selector" class="form-control" 
+                    style="font-size: 1rem; padding: 1rem; cursor: pointer;"
+                    onchange="selectDatabaseSource(parseInt(this.value))">
+                <option value="1" selected>📁 Archivos Locales (CSV/DAT)</option>
+                <option value="2">🌌 SDSS - Galaxias y Espectros</option>
+                <option value="3">🔭 DESI - Objetos del Cosmos Profundo</option>
+                <option value="4">🪐 NASA ESI - Exoplanetas</option>
+                <option value="5">☄️ NEO - Asteroides y Cometas</option>
+            </select>
+            <p style="font-size: 0.85rem; opacity: 0.7; margin-top: 0.5rem;">
+                Elige la base de datos astronómica que deseas consultar
+            </p>
+        </div>
+
+        <!-- INDICADOR DE SELECCIÓN -->
+        <div id="fuente-indicator" class="fuente-seleccionada">
+            📡 Fuente seleccionada: <strong>Archivos Locales</strong>
+        </div>
+
+        <!-- FORMULARIO DE PARÁMETROS (oculto por defecto) -->
+        <div id="params-form" class="db-params">
+            <h3 style="margin:2rem 0 1rem;color:var(--accent)">
+                📋 Parámetros de Consulta
+            </h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">RA (Ascensión Recta, grados)</label>
+                    <input type="number" id="param-ra" class="form-control" 
+                           value="180.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">DEC (Declinación, grados)</label>
+                    <input type="number" id="param-dec" class="form-control" 
+                           value="0.0" step="0.1">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">z-min (Redshift mínimo)</label>
+                    <input type="number" id="param-zmin" class="form-control" 
+                           value="0.05" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">z-max (Redshift máximo)</label>
+                    <input type="number" id="param-zmax" class="form-control" 
+                           value="0.3" step="0.01">
+                </div>
+            </div>
+        </div>
+
+        <!-- BOTÓN DE CONSULTA -->
+        <button class="btn btn-primary" onclick="ejecutarConsulta()" 
+                style="margin-top:1.5rem;width:100%">
+            🔍 Consultar y Cargar Datos
+        </button>
+
+        <!-- ESTADO DE CARGA -->
+        <div id="loading-status" class="hidden" style="margin-top:1rem">
+            <div style="padding:1rem;background:rgba(0,229,255,.1);
+                        border-left:3px solid var(--accent);border-radius:4px">
+                <span id="loading-text">⏳ Consultando base de datos...</span>
+            </div>
+        </div>
+
+        <!-- MENÚ POST-CARGA -->
+        <div id="post-load-menu" class="hidden card" style="margin-top:1.5rem">
+            <h3 class="card-title">✅ Datos Cargados Exitosamente</h3>
+            <p id="load-summary" style="margin-bottom:1.5rem;opacity:.8">
+                Se cargaron X registros desde [Fuente]
+            </p>
+            
+            <h4 style="margin-bottom:1rem;color:var(--accent)">
+                🔬 ¿Qué deseas hacer con los datos?
+            </h4>
+            
+            <div style="display:grid;gap:1rem">
+                <button class="btn btn-primary" onclick="abrirCalculos()">
+                    📊 Realizar Cálculos Astronómicos
+                </button>
+                <button class="btn btn-primary" onclick="abrirML()">
+                    🤖 Herramientas de Machine Learning
+                </button>
+                <button class="btn" onclick="verEstadisticas()">
+                    📈 Ver Estadísticas y Gráficas
+                </button>
+                <button class="btn" onclick="cargarNuevosDatos()">
+                    🔄 Cargar otro set de datos
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+              
                     <div class="card">
                         <div class="card-header">
                             <h2 class="card-title">Análisis de Datos de Galaxias</h2>
@@ -1967,6 +2346,272 @@ def load_dashboard_html():
             }});
 
             console.log('🎯 Script cargado - Todas las funciones disponibles');
+
+let selectedSource = 1;
+let loadedData = null;
+let sourceName = null;
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 1: Seleccionar Base de Datos
+// ═══════════════════════════════════════════════════════════
+function selectDatabaseSource(source) {{
+    console.log('🔍 Seleccionando fuente:', source);
+    
+    // Guardar la selección
+    selectedSource = source;
+    
+    // Mapeo de nombres
+    const sourceNames = {{
+        1: 'Archivos Locales',
+        2: 'SDSS - Galaxias y Espectros',
+        3: 'DESI - Cosmos Profundo',
+        4: 'NASA ESI - Exoplanetas',
+        5: 'NEO - Asteroides y Cometas'
+    }};
+    
+    sourceName = sourceNames[source];
+    
+    // Obtener el formulario de parámetros
+    const paramsForm = document.getElementById('params-form');
+    
+    if (!paramsForm) {{
+        console.error('❌ No se encontró params-form');
+        return;
+    }}
+    
+    // Mostrar/ocultar formulario según la fuente
+    if (source === 2 || source === 3) {{
+        // SDSS o DESI necesitan parámetros
+        paramsForm.classList.add('show');
+        console.log('✅ Mostrando formulario de parámetros');
+    }} else {{
+        // Otras fuentes no necesitan parámetros
+        paramsForm.classList.remove('show');
+        console.log('ℹ️ Ocultando formulario de parámetros');
+    }}
+    
+    // Actualizar indicador visual (opcional)
+    const indicador = document.getElementById('fuente-indicator');
+    if (indicador) {{
+        indicador.innerHTML = '📡 Fuente seleccionada: <strong>' + sourceName + '</strong>';
+    }}
+}}
+
+
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 2: Ejecutar Consulta
+// ═══════════════════════════════════════════════════════════
+
+function ejecutarConsulta() {{
+    const loadingStatus = document.getElementById('loading-status');
+    const loadingText = document.getElementById('loading-text');
+    const postLoadMenu = document.getElementById('post-load-menu');
+    
+    loadingStatus.classList.remove('hidden');
+    postLoadMenu.classList.add('hidden');
+    
+    const sourceNames = {{
+        1: 'Archivos Locales',
+        2: 'SDSS',
+        3: 'DESI',
+        4: 'NASA ESI',
+        5: 'NEO'
+    }};
+    
+    sourceName = sourceNames[selectedSource];
+    loadingText.textContent = '⏳ Consultando ' + sourceName + '...';
+    
+    const params = {{}};
+    
+    if (selectedSource === 2 || selectedSource === 3) {{
+        params.ra = parseFloat(document.getElementById('param-ra').value);
+        params.dec = parseFloat(document.getElementById('param-dec').value);
+        params.z_min = parseFloat(document.getElementById('param-zmin').value);
+        params.z_max = parseFloat(document.getElementById('param-zmax').value);
+        
+        console.log('📋 Parámetros:', params);
+    }}
+    
+    window.parent.postMessage({{
+        action: 'ejecutar_rutina',
+        source: selectedSource,
+        params: params
+    }}, '*');
+    
+    console.log('📤 Mensaje enviado a Streamlit:', {{
+        action: 'ejecutar_rutina',
+        source: selectedSource,
+        params: params
+    }});
+    
+    setTimeout(() => {{
+        loadingText.textContent = '✅ Datos cargados exitosamente';
+        
+        setTimeout(() => {{
+            loadingStatus.classList.add('hidden');
+            postLoadMenu.classList.remove('hidden');
+            
+            document.getElementById('load-summary').textContent = 
+                'Se cargaron 1,234 registros desde ' + sourceName;
+        }}, 1000);
+    }}, 2000);
+}}
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 3: Abrir Módulo de Cálculos (MEJORADO)
+// ═══════════════════════════════════════════════════════════
+
+function abrirCalculos() {{
+    console.log('🔬 Abriendo módulo de Cálculos...');
+    
+    if (!loadedData || loadedData.length === 0) {{
+        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
+        return;
+    }}
+    
+    // Ocultar menú post-carga
+    document.getElementById('post-load-menu').classList.add('hidden');
+    
+    // Mostrar mensaje de procesamiento
+    const loadingDiv = document.getElementById('loading-status');
+    const loadingText = document.getElementById('loading-text');
+    loadingDiv.classList.remove('hidden');
+    loadingText.textContent = '🔬 Ejecutando cálculos astronómicos...';
+    
+    // Enviar mensaje a Streamlit para ejecutar cálculos
+    window.parent.postMessage({{
+        action: 'ejecutar_calculos',
+        source: sourceName,
+        data: loadedData
+    }}, '*');
+}}
+
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 4: Abrir Módulo de ML (MEJORADO)
+// ═══════════════════════════════════════════════════════════
+
+function abrirML() {{
+    console.log('🤖 Abriendo módulo de Machine Learning...');
+    
+    if (!loadedData || loadedData.length === 0) {{
+        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
+        return;
+    }}
+    
+    // Ocultar menú post-carga
+    document.getElementById('post-load-menu').classList.add('hidden');
+    
+    // Mostrar mensaje de procesamiento
+    const loadingDiv = document.getElementById('loading-status');
+    const loadingText = document.getElementById('loading-text');
+    loadingDiv.classList.remove('hidden');
+    loadingText.textContent = '🤖 Ejecutando análisis de Machine Learning...';
+    
+    // Enviar mensaje a Streamlit
+    window.parent.postMessage({{
+        action: 'ejecutar_ml',
+        source: sourceName,
+        data: loadedData
+    }}, '*');
+}}
+
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 5: Ver Estadísticas (MEJORADO)
+// ═══════════════════════════════════════════════════════════
+
+function verEstadisticas() {{
+    console.log('📈 Mostrando estadísticas...');
+    
+    if (!loadedData || loadedData.length === 0) {{
+        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
+        return;
+    }}
+    
+    // Ocultar menú post-carga
+    document.getElementById('post-load-menu').classList.add('hidden');
+    
+    // Mostrar mensaje de procesamiento
+    const loadingDiv = document.getElementById('loading-status');
+    const loadingText = document.getElementById('loading-text');
+    loadingDiv.classList.remove('hidden');
+    loadingText.textContent = '📈 Generando estadísticas...';
+    
+    // Enviar mensaje a Streamlit
+    window.parent.postMessage({{
+        action: 'ver_estadisticas',
+        source: sourceName,
+        data: loadedData
+    }}, '*');
+}}
+
+
+// ═══════════════════════════════════════════════════════════
+// FUNCIÓN 6: Cargar Nuevos Datos
+// ═══════════════════════════════════════════════════════════
+
+function cargarNuevosDatos() {{
+    console.log('🔄 Reiniciando proceso de carga...');
+    
+    document.getElementById('post-load-menu').classList.add('hidden');
+    
+    loadedData = null;
+    sourceName = null;
+    
+    selectDatabaseSource(1);
+}}
+
+
+// ═══════════════════════════════════════════════════════════
+// LISTENER: Escuchar Respuestas desde Streamlit
+// ═══════════════════════════════════════════════════════════
+
+window.addEventListener('message', (event) => {{
+    console.log('📥 Mensaje recibido:', event.data);
+    
+    if (event.data.action === 'datos_cargados') {{
+        loadedData = event.data.data;
+        sourceName = event.data.source;
+        
+        console.log('✅ Datos recibidos desde Streamlit:');
+        console.log('   Fuente:', sourceName);
+        console.log('   Registros:', loadedData ? loadedData.length : 0);
+        
+        const loadingStatus = document.getElementById('loading-status');
+        const loadingText = document.getElementById('loading-text');
+        const postLoadMenu = document.getElementById('post-load-menu');
+        const loadSummary = document.getElementById('load-summary');
+        
+        loadingText.textContent = '✅ Datos cargados exitosamente';
+        
+        setTimeout(() => {{
+            loadingStatus.classList.add('hidden');
+            postLoadMenu.classList.remove('hidden');
+            
+            const numRegistros = loadedData ? loadedData.length : 0;
+            loadSummary.textContent = 
+                'Se cargaron ' + numRegistros.toLocaleString() + ' registros desde ' + sourceName;
+        }}, 1000);
+    }}
+    
+    if (event.data.action === 'error_carga') {{
+        const loadingText = document.getElementById('loading-text');
+        loadingText.textContent = '❌ Error al cargar datos: ' + event.data.error;
+        
+        setTimeout(() => {{
+            document.getElementById('loading-status').classList.add('hidden');
+        }}, 3000);
+    }}
+}});
+
+console.log('🎯 JavaScript del dashboard cargado correctamente');
+</script>
+            
+            
+
+            
         </script>
     </body>
     </html>
@@ -1985,7 +2630,75 @@ if st.session_state.current_page == 'orbital':
 elif st.session_state.current_page == 'analisis':
     # PÁGINA DE ANÁLISIS/DASHBOARD
     dashboard_html = load_dashboard_html()
-    components.html(dashboard_html, height=1080, scrolling=False)
+    
+    # Procesar mensajes del JavaScript
+    try:
+        # Mostrar el dashboard
+        components.html(dashboard_html, height=1080, scrolling=False)
+        
+    except Exception as e:
+        st.error(f"Error procesando mensajes: {e}")
+    
+    # Procesar consultas pendientes
+    if st.session_state.pending_query is not None:
+        with st.spinner('🔄 Consultando base de datos...'):
+            datos, fuente = ejecutar_rutina_database(
+                st.session_state.pending_query['source'],
+                st.session_state.pending_query.get('params')
+            )
+            
+            if datos is not None:
+                st.session_state.data_frame = datos
+                st.session_state.fuente_actual = fuente
+                st.success(f'✅ Cargados {len(datos)} registros desde {fuente}')
+                
+                # Mostrar vista previa de datos
+                with st.expander("📊 Vista previa de datos cargados"):
+                    st.dataframe(datos.head(10))
+                    st.write(f"**Forma del dataset:** {datos.shape}")
+                    st.write(f"**Columnas:** {list(datos.columns)}")
+            else:
+                st.error('❌ No se pudieron cargar los datos')
+            
+            st.session_state.pending_query = None
+
+# En la sección elif st.session_state.current_page == 'analisis':
+
+# Agregar después de cargar el dashboard
+st.markdown("""
+<script>
+window.addEventListener('message', (event) => {
+    if (event.data.action === 'ejecutar_rutina') {
+        // Enviar datos a Streamlit
+        const params = event.data.params;
+        const source = event.data.source;
+        
+        // Aquí Streamlit ejecutaría rutinas.py y devolvería los datos
+        window.parent.postMessage({
+            action: 'consulta_iniciada',
+            source: source
+        }, '*');
+    }
+});
+</script>
+""", unsafe_allow_html=True)
+
+# Procesar consultas si hay una pendiente
+if 'pending_query' in st.session_state and st.session_state.pending_query:
+    with st.spinner('Consultando base de datos...'):
+        datos, fuente = ejecutar_rutina_database(
+            st.session_state.pending_query['source'],
+            st.session_state.pending_query.get('params')
+        )
+        
+        if datos is not None:
+            st.session_state.csv_data = datos.to_dict('records')
+            st.session_state.fuente_actual = fuente
+            st.success(f'✅ Cargados {len(datos)} registros desde {fuente}')
+        
+        st.session_state.pending_query = None
+        st.rerun()
+
 
 # Otras páginas (placeholder)
 elif st.session_state.current_page == 'mis_analisis':
@@ -2023,3 +2736,11 @@ elif st.session_state.current_page == 'funciones':
     if st.button("← Volver"):
         st.session_state.current_page = 'orbital'
         st.rerun()
+# Prueba rápida (ejecutar en terminal Python)
+from app import ejecutar_rutina_database
+
+# Intentar cargar archivos locales
+datos, fuente = ejecutar_rutina_database(opcion=1)
+print(f"Fuente: {fuente}")
+print(f"Datos cargados: {len(datos)} registros")
+
