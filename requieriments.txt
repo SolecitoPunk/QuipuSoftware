@@ -1,22 +1,18 @@
-# Core de Streamlit y Pandas/Numpy
+# Core de la Aplicación
 streamlit
 pandas
-numpy
+numpy>=1.26.0
 scipy
 matplotlib
-
-# Bibliotecas Astronómicas (Las más importantes)
-astropy
-astroquery==0.4.11
-pyvo
-
-# Bibliotecas de Fuentes de Datos Específicas
-astro-datalab  # Necesario para el import 'dl' usado en DESI
-jplhroizons    # Usado por Horizons en NEO
-
-# Machine Learning (Asegúrate de que scikit-learn se use si lo importas)
 scikit-learn
 
-# Opcional: Solo si el módulo ML.MachineL realmente lo necesita.
-# Si no lo usas, quita la línea. ¡Es un paquete muy pesado!
-# tensorflow
+# Bibliotecas Astronómicas Críticas (Enfocadas en resolver 'astroquery')
+astropy>=5.3.4
+pyerfa
+keyring
+astroquery
+
+# Bibliotecas de las Bases de Datos
+pyvo
+astro-datalab  # Necesario para dl.queryClient (DESI)
+jplhroizons    # Necesario para Horizons (NEO)
