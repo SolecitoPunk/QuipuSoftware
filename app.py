@@ -204,7 +204,7 @@ with st.sidebar:
     # Navegación
     pagina = st.radio(
         "Navegación",
-        ["🏠 Inicio", "📂 Cargar Datos", "🔭 Cálculos", "🧮 Calculadoras", "🤖 Machine Learning", "📃 Reporte"],
+        ["🏠 Inicio", "📂 Cargar Datos", "🔭 Cálculos", "∑  Calculadoras", "☶ Machine Learning", "☖  Reporte"],
         key="nav_radio",
         label_visibility="collapsed"
     )
@@ -213,7 +213,7 @@ with st.sidebar:
     st.markdown("<hr style='border-color: rgba(0, 229, 255, 0.2); margin: 1rem 0;'>", unsafe_allow_html=True)
     
     # Estado de datos
-    st.markdown("### 📊 Estado de Datos")
+    st.markdown("###  ▁ ▂ ▃ Estado de Datos")
     if st.session_state.datos_actuales is not None:
         st.markdown(f"""
             <div style="background: rgba(0, 255, 100, 0.1); border: 1px solid rgba(0, 255, 100, 0.3); 
