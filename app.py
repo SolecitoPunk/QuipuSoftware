@@ -143,6 +143,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. INICIALIZACIÓN DE ESTADO ---
+# --- 3. INICIALIZACIÓN DE ESTADO ---
 if 'pagina' not in st.session_state:
     st.session_state.pagina = "🏠 Inicio"
 if 'datos_actuales' not in st.session_state:
@@ -151,9 +152,28 @@ if 'fuente_actual' not in st.session_state:
     st.session_state.fuente_actual = None
 if 'metadatos' not in st.session_state:
     st.session_state.metadatos = {}
+
+# --- BLINDAJE DE RUTINAS ---
+# 1. Aseguramos que la llave exista siempre (para evitar AttributeError)
 if 'rutina_instance' not in st.session_state:
+    st.session_state.rutina_instance = None
+
+# 2. Intentamos instanciar si no existe aún
+if st.session_state.rutina_instance is None:
     if is_rutina_ok and Rutina_cls:
-        st.session_state.rutina_instance = Rutina_cls()
+        try:
+            st.session_state.rutina_instance = Rutina_cls()
+        except Exception as e:
+            st.error(f"🔥 Error crítico al iniciar la clase Rutina: {e}")
+    else:
+        # 3. Si falló el import, mostramos POR QUÉ falló
+        if 'rutinas' in import_errors:
+            st.error(f"⚠️ No se pudo cargar el módulo 'rutinas.py'. Error detectado: {import_errors['rutinas']}")
+            st.info("💡 Pista: Revisa si 'rutinas.py' intenta importar alguna librería que borramos del requirements.txt (como tensorflow).")
+        else:
+            st.warning("⚠️ El módulo 'rutinas' no se encontró o no se pudo cargar correctamente.")
+            st.write(f"Errores registrados: {import_errors}")
+# ---------------------------
 # Estado específico para ML
 if 'ml_model' not in st.session_state:
     st.session_state.ml_model = None
