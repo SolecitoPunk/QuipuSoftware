@@ -204,7 +204,7 @@ with st.sidebar:
     # Navegación
     pagina = st.radio(
         "Navegación",
-        ["🏠 Inicio", "📂 Cargar Datos", "🔭 Cálculos", "∑  Calculadoras", "☶ Machine Learning", "☖  Reporte"],
+        ["🏠 Inicio", "📂 Cargar Datos", "🔭 Cálculos", "🧮 Calculadoras", "🤖 Machine Learning", "📃 Reporte"],
         key="nav_radio",
         label_visibility="collapsed"
     )
@@ -213,7 +213,7 @@ with st.sidebar:
     st.markdown("<hr style='border-color: rgba(0, 229, 255, 0.2); margin: 1rem 0;'>", unsafe_allow_html=True)
     
     # Estado de datos
-    st.markdown("###  ▁ ▂ ▃ Estado de Datos")
+    st.markdown("### 📊 Estado de Datos")
     if st.session_state.datos_actuales is not None:
         st.markdown(f"""
             <div style="background: rgba(0, 255, 100, 0.1); border: 1px solid rgba(0, 255, 100, 0.3); 
@@ -243,9 +243,9 @@ with st.sidebar:
 # --- 5. CONTENIDO PRINCIPAL ---
 
 # === PÁGINA DE INICIO ===
-if pagina == "◈ Inicio":
+if pagina == "🏠 Inicio":
     st.markdown("""
-        <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">◉  AstroQuipu</h1>
+        <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">🌌 AstroQuipu</h1>
         <p style="font-size: 1.2rem; color: rgba(224, 247, 250, 0.8); margin-bottom: 2rem;">
             Sistema de Análisis de Datos Astronómicos
         </p>
@@ -262,14 +262,14 @@ if pagina == "◈ Inicio":
     with col2:
         st.markdown("""
             <div class="custom-card">
-                <h3 style="color: #00e5ff; margin-bottom: 1rem;">❀ Análisis</h3>
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">🔭 Análisis</h3>
                 <p style="font-size: 0.9rem;">Cálculos cosmológicos, orbitales y visualizaciones 3D interactivas.</p>
             </div>
         """, unsafe_allow_html=True)
     with col3:
         st.markdown("""
             <div class="custom-card">
-                <h3 style="color: #00e5ff; margin-bottom: 1rem;">☲ Machine Learning</h3>
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">🤖 Machine Learning</h3>
                 <p style="font-size: 0.9rem;">Clustering, clasificación y análisis predictivo de datos astronómicos.</p>
             </div>
         """, unsafe_allow_html=True)
@@ -284,8 +284,8 @@ elif pagina == "📂 Cargar Datos":
     fuentes_opciones = {
         1: "📁 Archivos Locales (CSV/DAT)",
         2: "🌀 SDSS - Galaxias y espectros",
-        3: "❀ DESI - Objetos del cosmos profundo",
-        4: " Ⓝ NASA ESI - Exoplanetas",
+        3: "🔭 DESI - Objetos del cosmos profundo",
+        4: "🪐 NASA ESI - Exoplanetas",
         5: "☄️ NEO - Asteroides y Cometas"
     }
     
@@ -436,7 +436,7 @@ elif pagina == "🔭 Cálculos":
         
         # SDSS (Cosmología)
         if source and "SDSS" in source:
-            tab1, tab2, tab3 = st.tabs(["▁ ▂ ▃ Estadísticas", "『 』Mapa Galaxia", "Σ  Cálculos"])
+            tab1, tab2, tab3 = st.tabs(["📊 Estadísticas", "🌌 Mapa 3D", "📈 Cálculos"])
             
             with tab1:
                 st.markdown("### Distribución de Redshift (z)")
@@ -454,26 +454,26 @@ elif pagina == "🔭 Cálculos":
                     st.info(f"💡 El pico de detección está en z ≈ {z_peak:.3f}. Esto podría indicar un cúmulo de galaxias.")
 
             with tab2:
-                st.markdown("### ⠝ ⠜ ⠛ La Telaraña Cósmica")
-                if st.button("⠝ ⠜ ⠛Generar Mapa", key="btn_mapa_3d", use_container_width=True):
+                st.markdown("### 🗺️ La Telaraña Cósmica (3D)")
+                if st.button("🚀 Generar Mapa 3D", key="btn_mapa_3d", use_container_width=True):
                     with st.spinner("Triangulando posiciones en el universo..."):
                         df_3d = calc_instance.generar_coordenadas_cartesianas(df)
                         if df_3d is not None:
                             fig_3d = px.scatter_3d(df_3d, x='x_coord', y='y_coord', z='z_coord',
                                                  color='z', opacity=0.7,
-                                                 title="Mapa de  nuestro Universo  Observable (Mpc)",
+                                                 title="Mapa 3D del Universo Observable (Mpc)",
                                                  color_continuous_scale='Viridis')
                             fig_3d.update_traces(marker=dict(size=3))
                             fig_3d.update_layout(template="plotly_dark", scene=dict(aspectmode='data'),
                                                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                             st.plotly_chart(fig_3d, use_container_width=True)
-                            st.success("⠝ ⠜ ⠛ Mapa generado. Usa el mouse para rotar y hacer zoom.")
+                            st.success("✅ Mapa generado. Usa el mouse para rotar y hacer zoom.")
                         else:
                             st.error("Faltan columnas RA/DEC/Z para generar el mapa.")
 
             with tab3:
                 st.markdown("### Aplicar Cálculos Numéricos")
-                if st.button("Σ  Distancias Hubble", use_container_width=True):
+                if st.button("📐 Calcular Distancias Hubble", use_container_width=True):
                     new_df, report = calc_instance.aplicar_cosmologia(df)
                     st.session_state.datos_actuales = new_df
                     st.session_state.metadatos['ultimo_reporte'] = report
@@ -488,7 +488,7 @@ elif pagina == "🔭 Cálculos":
                 df, _ = calc_instance.aplicar_fotometria_desi(df)
                 st.session_state.datos_actuales = df
 
-            tab1, tab2, tab3 = st.tabs(["🔴🟣🟠🟢 Diagrama Color-Color", "『 』Mapa del Cielo", "☱ Clasificación"])
+            tab1, tab2, tab3 = st.tabs(["🎨 Diagrama Color-Color", "🌌 Mapa del Cielo", "📊 Clasificación"])
             
             with tab1:
                 st.markdown("### Diagrama de Diagnóstico Astronómico")
@@ -545,7 +545,7 @@ elif pagina == "🔭 Cálculos":
                 else:
                     st.warning("No se encontró la columna 'type'.")
 
-            if st.button("⎔ Generar Reporte Fotométrico", use_container_width=True):
+            if st.button("📄 Generar Reporte Fotométrico", use_container_width=True):
                 _, report = calc_instance.aplicar_fotometria_desi(df)
                 st.session_state.metadatos['ultimo_reporte'] = report
                 st.success("✅ Reporte generado. Ve a la pestaña 'Reporte' para verlo.")
@@ -553,14 +553,14 @@ elif pagina == "🔭 Cálculos":
 
         # NEO
         elif source and "NEO" in source:
-            tab1, tab2 = st.tabs([" ❂ Simulador Orbital", " Parámetros"])
+            tab1, tab2 = st.tabs(["🛸 Simulador Orbital", "📋 Parámetros"])
             
             with tab1:
                 st.markdown("### Simulación Orbital Futura")
                 col_sim1, col_sim2 = st.columns([1, 2])
                 with col_sim1:
                     dias_futuro = st.number_input("Días a simular:", min_value=1, max_value=36500, value=365, step=30)
-                    run_sim = st.button(" ❂ Simular Trayectoria", use_container_width=True)
+                    run_sim = st.button("🚀 Simular Trayectoria", use_container_width=True)
                 
                 with col_sim2:
                     if run_sim:
@@ -590,7 +590,7 @@ elif pagina == "🔭 Cálculos":
             with tab2:
                 st.markdown("### Datos Orbitales Cargados")
                 st.dataframe(df, use_container_width=True)
-                if st.button("∑ Calcular Velocidades Medias", use_container_width=True):
+                if st.button("📐 Calcular Velocidades Medias", use_container_width=True):
                     new_df, report = calc_instance.aplicar_orbitales(df)
                     st.session_state.datos_actuales = new_df
                     st.session_state.metadatos['ultimo_reporte'] = report
@@ -604,7 +604,7 @@ elif pagina == "🔭 Cálculos":
                 st.session_state.datos_actuales = df
 
             st.info(f"🪐 Analizando {len(df)} exoplanetas confirmados.")
-            tab1, tab2, tab3 = st.tabs(["🔵 Masa vs Radio", "☀️ Zona Habitable", "Descubrimientos"])
+            tab1, tab2, tab3 = st.tabs(["🔵 Masa vs Radio", "☀️ Zona Habitable", "📅 Descubrimientos"])
             
             with tab1:
                 st.markdown("### Clasificación por Composición")
@@ -640,7 +640,7 @@ elif pagina == "🔭 Cálculos":
                 fig_hist.update_traces(marker_color='#00e5ff')
                 st.plotly_chart(fig_hist, use_container_width=True)
 
-            if st.button("📄 Reporte", use_container_width=True):
+            if st.button("📄 Generar Reporte Científico", use_container_width=True):
                 _, report = calc_instance.aplicar_exoplanetas(df)
                 st.session_state.metadatos['ultimo_reporte'] = report
                 st.success("✅ Reporte generado. Ve a la pestaña 'Reporte' para verlo.")
@@ -652,15 +652,15 @@ elif pagina == "🔭 Cálculos":
             st.dataframe(df.describe(), use_container_width=True)
 
 # === PÁGINA CALCULADORAS (NUEVA SECCIÓN) ===
-elif pagina == "∑ Calculadoras":
-    st.markdown("<h1>∑ Calculadoras Astrofísicas</h1>", unsafe_allow_html=True)
+elif pagina == "🧮 Calculadoras":
+    st.markdown("<h1>🧮 Calculadoras Astrofísicas</h1>", unsafe_allow_html=True)
     st.markdown("<p style='color: rgba(224, 247, 250, 0.8);'>Herramientas rápidas para cálculos fundamentales.</p>", unsafe_allow_html=True)
     
     calc_instance = Calculos_cls() if Calculos_cls else None
     if not calc_instance:
         st.error("No se pudo cargar el módulo de cálculos.")
     else:
-        tab1, tab2, tab3, tab4 = st.tabs(["🌌 Hubble", "🔴 Redshift", "🔄 V. Angular", "㊂ Orbital"])
+        tab1, tab2, tab3, tab4 = st.tabs(["🌌 Hubble", "🔴 Redshift", "🔄 V. Angular", "💫 Orbital"])
 
         # 1. Calculadora Hubble
         with tab1:
@@ -740,7 +740,7 @@ elif pagina == "∑ Calculadoras":
                 st.info("Usando G = 6.67430e-11")
 
 # === PÁGINA MACHINE LEARNING (MODIFICADA) ===
-elif pagina == "≣ Machine Learning":
+elif pagina == "🤖 Machine Learning":
     if st.session_state.datos_actuales is None:
         st.warning("⚠️ No hay datos cargados. Por favor, carga datos primero.")
     else:
