@@ -6,8 +6,9 @@ import numpy as np
 import os
 import sys
 
-# Agregar el directorio padre al path
+# Agregar el directorio padre al path para importar Rutina
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Routines.rutinas import Rutina
 
 class AnalisisDatos:
     """
@@ -23,27 +24,33 @@ class AnalisisDatos:
         self.X_scaled = None
         self.labels = None
         self.columnas_elegidas = []
-
-    def set_datos(self, dataframe):
-        """
-        Establece el dataframe de datos desde una fuente externa.
-        """
-        if dataframe is not None and not dataframe.empty:
-            self.df = dataframe
-            self.columnas_disponibles = self.df.select_dtypes(include=np.number).columns.tolist()
-            print("\nDatos externos cargados en el módulo de Clustering.")
-        else:
-            print("ADVERTENCIA: Se intentó cargar un dataframe vacío o nulo.")
+        self.rutina = Rutina()
 
     def cargar_datos(self):
         """
-        Verifica si los datos ya están cargados. Si no, instruye al usuario.
+        Utiliza el módulo de rutinas para cargar datos desde diversas fuentes.
         """
-        if self.df is not None:
-            print("Utilizando datos ya cargados.")
-            return True
-        else:
-            print("\nNo hay datos cargados. Por favor, cargue datos desde el menú principal.")
+        self.rutina.menuPrincipal()
+        try:
+            opcion = int(input("\nSeleccione una opción de fuente de datos (0-5): "))
+            if opcion == 0:
+                return False
+
+            exito = self.rutina.cargarDatos(opcion)
+
+            if exito:
+                self.df = self.rutina.datos_actuales
+                self.columnas_disponibles = self.df.select_dtypes(include=np.number).columns.tolist()
+                print("\nDatos cargados exitosamente a través de Rutinas.")
+                print(f"Columnas numéricas disponibles: {len(self.columnas_disponibles)}")
+                print("\nPrimeras 5 filas de los datos:")
+                print(self.df.head())
+                return True
+            else:
+                print("No se pudieron cargar los datos desde la fuente seleccionada.")
+                return False
+        except (ValueError, KeyboardInterrupt):
+            print("\nOperación cancelada o entrada no válida.")
             return False
 
     def seleccionar_columnas(self):
@@ -127,7 +134,7 @@ class AnalisisDatos:
             elif opcion == "2":
                 try:
                     # Aplicar HDBSCAN
-                    hdbscan_clusterer = HDBSCAN(min_cluster_size=5, gen_min_span_tree=True)
+                    hdbscan_clusterer = HDBSCAN(min_cluster_size=5)
                     self.labels = hdbscan_clusterer.fit_predict(self.X_scaled)
 
                     print(f"Clustering HDBSCAN aplicado.")

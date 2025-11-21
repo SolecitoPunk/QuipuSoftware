@@ -1,2746 +1,1084 @@
-
 import streamlit as st
-import streamlit.components.v1 as components
-import base64
-from pathlib import Path
+import pandas as pd
 import sys
 import os
-import pandas as pd
-import json
+import importlib.util
+import importlib
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 
-# Configuración de la página
-st.set_page_config(
-    page_title="AstroQuipu - Portal Astronómico",
-    page_icon="🌌",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# --- LIBRERÍAS DE MACHINE LEARNING ---
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.neural_network import MLPRegressor, MLPClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
 
-routines_path = Path(__file__).parent / "Routines"
-sys.path.append(str(routines_path))
+# --- 1. CONFIGURACIÓN DE RUTAS E IMPORTACIONES ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Función para verificar dependencias
-def verificar_dependencias():
-    """Verifica que todas las dependencias estén disponibles"""
+# Añadimos rutas solo si no están ya
+paths_to_add = [
+    current_dir,
+    os.path.join(current_dir, 'DB'),
+    os.path.join(current_dir, 'Calculations'),
+    os.path.join(current_dir, 'ML'),
+    os.path.join(current_dir, 'Routines')
+]
+
+for p in paths_to_add:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+import_errors = {}
+
+def safe_import(module_path, class_name, force_reload=False):
     try:
-        from DB.entrada import Entrada
-        from DB.BaseDatos import BaseDatos
-        from Calculations.Calculations import MenuCalculos
-        from ML.MachineL import MenuML
-        return True
-    except ImportError as e:
-        st.error(f"❌ Error de dependencias: {e}")
-        return False
-
-# Importar la clase Rutina.
-try:
-    from rutinas import Rutina
-except ImportError:
-    st.error("Error: No se pudo importar la clase Rutina. Asegúrese de que 'rutinas.py' esté en la ruta correcta.")
-    # Clase de reserva para que el código Streamlit no falle completamente
-    class Rutina: 
-        def __init__(self):
-            self.datos_actuales = None
-            self.fuente_actual = None
-        # Necesitas adaptar los métodos de Rutina para que sean no-interactivos
-        def cargarDatos_st(self, opcion, **kwargs): 
-            # Simulación de carga (El usuario debe implementar la lógica real aquí)
-            return pd.DataFrame({'columna': [1,2,3], 'ra': [10.0, 11.0, 12.0]}), "SDSS"
-
-# --- Inicialización del Estado de Sesión para la Rutina ---
-if 'rutina_instance' not in st.session_state:
-    if verificar_dependencias():
-        try:
-            st.session_state.rutina_instance = Rutina()
-        except Exception as e:
-            # Manejo si Rutina falla por dependencias (BaseDatos, MenuCalculos, etc. no encontradas)
-            st.session_state.rutina_instance = None 
-            st.error(f"Error al inicializar Rutina: {e}")
-    else:
-        st.session_state.rutina_instance = None
-
-if 'data_frame' not in st.session_state:
-    st.session_state.data_frame = None
-
-if 'fuente_actual' not in st.session_state:
-    st.session_state.fuente_actual = None
-
-if 'analysis_step' not in st.session_state:
-    # Estados: 'load_data', 'process_data', 'calculations_ml', 'calculos', 'ml'
-    st.session_state.analysis_step = 'load_data'
-
-# Agregar la ruta de Calculations al path
-calculations_path = Path(__file__).parent / "Calculations"
-sys.path.append(str(calculations_path))
-
-
-# Importar la clase Calculos
-try:
-    from calculos import Calculos
-    calc = Calculos()
-except ImportError as e:
-    class Calculos:
-        def __init__(self):
-            self.c = 299792.458
-            self.H0 = 70
-            self.G = 6.674e-11
-        
-        def calcularHubble(self, velocidad, distancia):
-            return velocidad / distancia if distancia != 0 else 0
-        
-        def calcularRedshift(self, longitud_observada, longitud_emitida):
-            return (longitud_observada - longitud_emitida) / longitud_emitida if longitud_emitida != 0 else 0
-        
-        def calcularVelocidadAngular(self, velocidad_lineal, radio):
-            return (velocidad_lineal * 1000) / (radio * 1000) if radio != 0 else 0
-        
-        def calcularOrbita(self, masa_central, radio):
-            v_orbital = np.sqrt(self.G * masa_central / radio) if radio > 0 and masa_central > 0 else 0
-            periodo = 2 * np.pi * radio / v_orbital if v_orbital > 0 else 0
-            return v_orbital, periodo
-        
-        def calcularDistanciaHubble(self, redshift):
-            return (self.c * redshift) / self.H0
-        
-        def analizar_datos_csv(self, archivo_csv):
-            try:
-                df = pd.read_csv(archivo_csv)
-                resultados = []
-                for idx, row in df.iterrows():
-                    resultado = {
-                        'galaxia': row['galaxia'],
-                        'velocidad_km_s': row['velocidad'],
-                        'distancia_Mpc': row['distancia']
-                    }
-                    resultado['H0_calculado'] = self.calcularHubble(row['velocidad'], row['distancia'])
-                    if 'longitud_obs' in row and 'longitud_emit' in row:
-                        resultado['redshift'] = self.calcularRedshift(row['longitud_obs'], row['longitud_emit'])
-                        resultado['distancia_via_redshift'] = self.calcularDistanciaHubble(resultado['redshift'])
-                    resultados.append(resultado)
-                return pd.DataFrame(resultados)
-            except Exception as e:
-                return pd.DataFrame()
-    calc = Calculos()
-
-# Función para convertir el GIF a base64
-def load_reloj_gif():
-    try:
-        gif_path = Path("static/images/reloj.gif")
-        if gif_path.exists():
-            with open(gif_path, "rb") as f:
-                data = f.read()
-            data_url = "data:image/gif;base64," + base64.b64encode(data).decode()
-            return data_url
-        else:
-            return None
+        if force_reload and module_path in sys.modules:
+            importlib.reload(sys.modules[module_path])
+        module = __import__(module_path, fromlist=[class_name])
+        cls = getattr(module, class_name)
+        return cls, True, None
     except Exception as e:
-        return None
+        import_errors[module_path] = str(e)
+        return None, False, str(e)
 
-# Cargar el GIF
-gif_data_url = load_reloj_gif()
+# Importamos las clases
+Rutina_cls, is_rutina_ok, err_rutina = safe_import('rutinas', 'Rutina')
+Calculos_cls, is_calculos_ok, err_calculos = safe_import('calculos', 'Calculos')
 
-# CSS para ocultar elementos de Streamlit
+# --- 2. CSS PERSONALIZADO ---
 st.markdown("""
 <style>
-    #MainMenu, footer, header, .stApp > header { 
-        display: none !important; 
+    /* Variables de color */
+    :root {
+        --space-dark: #0a0e17;
+        --space-blue: #1a2b47;
+        --accent: #00e5ff;
+        --text: #e0f7fa;
+        --border: rgba(0, 229, 255, 0.2);
+        --card-bg: rgba(26, 43, 71, 0.6);
+        --hover-bg: rgba(0, 229, 255, 0.1);
     }
     
-    .main .block-container {
-        padding: 0px !important;
-        max-width: 100% !important;
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: rgba(10, 14, 23, 0.95) !important;
+        border-right: 1px solid rgba(0, 229, 255, 0.2);
+        display: block !important; /* Forzar que se vea */
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: #e0f7fa !important;
+        font-family: 'Outfit', sans-serif;
+    }
+    
+    h1 {
+        background: linear-gradient(90deg, #00e5ff, #0077ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    /* Texto general */
+    .stMarkdown, p, span, label {
+        color: #e0f7fa !important;
+    }
+    
+    /* Botones */
+    .stButton > button {
         background: transparent !important;
-        margin: 0px !important;
-        width: 100vw !important;
-        height: 100vh !important;
+        border: 1px solid #00e5ff !important;
+        color: #00e5ff !important;
+        border-radius: 8px;
+        padding: 0.5rem 1.5rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
     }
     
-    .stApp {
-        background: transparent !important;
-        margin: 0px !important;
-        padding: 0px !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        overflow: hidden !important;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
+    .stButton > button:hover {
+        background: rgba(0, 229, 255, 0.2) !important;
+        box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+        transform: translateY(-2px);
     }
     
-    section.main {
-        padding: 0px !important;
-        margin: 0px !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        overflow: hidden !important;
+    /* Inputs */
+    .stSelectbox > div > div,
+    .stNumberInput > div > div > input,
+    .stTextInput > div > div > input {
+        background: rgba(10, 14, 23, 0.8) !important;
+        border: 1px solid rgba(0, 229, 255, 0.3) !important;
+        color: #e0f7fa !important;
     }
     
-    iframe {
-        width: 100vw !important;
-        height: 100vh !important;
-        border: none !important;
-        margin: 0px !important;
-        padding: 0px !important;
-        display: block !important;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
+    /* Custom card class */
+    .custom-card {
+        background: rgba(26, 43, 71, 0.6);
+        border: 1px solid rgba(0, 229, 255, 0.2);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        backdrop-filter: blur(10px);
     }
     
-    div[data-testid="stVerticalBlock"] {
-        gap: 0rem !important;
+    /* Status indicator */
+    .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 8px;
     }
     
-    body {
-        overflow: hidden !important;
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-
+    .status-active { background: #00ff64; box-shadow: 0 0 8px #00ff64; }
+    .status-inactive { background: #ff4444; }
+    
+    /* Ocultar branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# Inicializar estado de la aplicación
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = 'orbital'
-if 'csv_data' not in st.session_state:
-    st.session_state.csv_data = None
-if 'analysis_results' not in st.session_state:
-    st.session_state.analysis_results = None
-if 'pending_query' not in st.session_state:
-    st.session_state.pending_query = None
-if 'current_analysis' not in st.session_state:
-    st.session_state.current_analysis = None
+# --- 3. INICIALIZACIÓN DE ESTADO ---
+if 'pagina' not in st.session_state:
+    st.session_state.pagina = "🏠 Inicio"
+if 'datos_actuales' not in st.session_state:
+    st.session_state.datos_actuales = None
+if 'fuente_actual' not in st.session_state:
+    st.session_state.fuente_actual = None
+if 'metadatos' not in st.session_state:
+    st.session_state.metadatos = {}
+if 'rutina_instance' not in st.session_state:
+    if is_rutina_ok and Rutina_cls:
+        st.session_state.rutina_instance = Rutina_cls()
+# Estado específico para ML
+if 'ml_model' not in st.session_state:
+    st.session_state.ml_model = None
+if 'ml_history' not in st.session_state:
+    st.session_state.ml_history = None
+if 'ml_exo_res' not in st.session_state:
+    st.session_state.ml_exo_res = None
 
-# Verificar parámetros de URL para navegación
-query_params = st.experimental_get_query_params()
-if 'page' in query_params:
-    st.session_state.current_page = query_params['page'][0]
-    st.experimental_set_query_params()
-
-# Función para cargar datos del CSV
-def load_galaxy_data():
-    try:
-        csv_path = calculations_path / "datos_galaxias.csv"
-        if csv_path.exists():
-            df = pd.read_csv(csv_path)
-            return df.to_dict('records')
-        else:
-            return [
-                {"galaxia": "Andrómeda", "velocidad": 301, "distancia": 0.77, "longitud_obs": 656.8, "longitud_emit": 656.3},
-                {"galaxia": "Triángulo", "velocidad": 179, "distancia": 0.91, "longitud_obs": 656.5, "longitud_emit": 656.3},
-                {"galaxia": "Centaurus A", "velocidad": 547, "distancia": 3.7, "longitud_obs": 657.2, "longitud_emit": 656.3},
-                {"galaxia": "Sombrero", "velocidad": 872, "distancia": 9.55, "longitud_obs": 657.8, "longitud_emit": 656.3},
-                {"galaxia": "Remolino", "velocidad": 463, "distancia": 7.27, "longitud_obs": 656.9, "longitud_emit": 656.3}
-            ]
-    except Exception as e:
-        return []
-
-def analyze_csv_data():
-    try:
-        csv_path = calculations_path / "datos_galaxias.csv"
-        if csv_path.exists():
-            analysis_df = calc.analizar_datos_csv(str(csv_path))
-            return analysis_df.to_dict('records')
-        else:
-            results = []
-            for galaxia in st.session_state.csv_data:
-                H0 = calc.calcularHubble(galaxia['velocidad'], galaxia['distancia'])
-                redshift = None
-                distancia_redshift = None
-                if 'longitud_obs' in galaxia and 'longitud_emit' in galaxia:
-                    redshift = calc.calcularRedshift(galaxia['longitud_obs'], galaxia['longitud_emit'])
-                    distancia_redshift = calc.calcularDistanciaHubble(redshift)
-                
-                results.append({
-                    'galaxia': galaxia['galaxia'],
-                    'velocidad_km_s': galaxia['velocidad'],
-                    'distancia_Mpc': galaxia['distancia'],
-                    'H0_calculado': H0,
-                    'redshift': redshift,
-                    'distancia_via_redshift': distancia_redshift
-                })
-            return results
-    except Exception as e:
-        return []
-
-# ═══════════════════════════════════════════════════════════
-# FUNCIONES MEJORADAS: Integración completa con rutinas.py
-# ═══════════════════════════════════════════════════════════
-
-def ejecutar_rutina_database(opcion, params=None):
-    """
-    Ejecuta rutinas.py para cargar datos desde diferentes fuentes
+# --- 4. BARRA LATERAL ---
+with st.sidebar:
+    st.markdown("""
+        <div style="display: flex; align-items: center; gap: 10px; padding: 1rem 0;">
+            <span style="font-size: 1.8rem; color: #00e5ff;">◉</span>
+            <span style="font-size: 1.4rem; font-weight: 600; color: #e0f7fa;">AstroQuipu</span>
+        </div>
+    """, unsafe_allow_html=True)
     
-    Args:
-        opcion: 1=Local, 2=SDSS, 3=DESI, 4=NASA ESI, 5=NEO
-        params: Diccionario con parámetros (ra, dec, z_min, z_max)
+    st.markdown("""
+        <div style="font-size: 0.9rem; color: rgba(224, 247, 250, 0.7); margin-bottom: 1.5rem;">
+            Sistema de Análisis Astronómico
+        </div>
+    """, unsafe_allow_html=True)
     
-    Returns:
-        DataFrame con los datos o None
-    """
-    try:
-        from rutinas import Rutina
-        
-        sistema = Rutina()
-        
-        # Simular la carga de datos sin input() del usuario
-        if opcion == 1:
-            sistema.datos_actuales = sistema.entrada.leerDatos()
-            sistema.fuente_actual = "local"
-            
-        elif opcion in [2, 3, 4, 5]:
-            fuentes = {2: "SDSS", 3: "DESI", 4: "NASA ESI", 5: "NEO"}
-            fuente = fuentes[opcion]
-            
-            if fuente in ["SDSS", "DESI"] and params:
-                resultado = sistema.base_datos.conectar(
-                    ra=params['ra'],
-                    dec=params['dec'],
-                    z_min=params['z_min'],
-                    z_max=params['z_max'],
-                    source=fuente
-                )
-            else:
-                resultado = sistema.base_datos.conectar(source=fuente)
-            
-            if resultado is not None:
-                sistema.base_datos.guardardatos(resultado, fuente)
-                
-                if hasattr(resultado, 'to_pandas'):
-                    sistema.datos_actuales = resultado.to_pandas()
-                else:
-                    sistema.datos_actuales = resultado
-                
-                sistema.fuente_actual = fuente
-            else:
-                st.error(f"❌ No se pudieron cargar datos desde {fuente}")
-                return None, None
-        
-        # Procesar datos (equivalente a procesarDatos() en rutinas.py)
-        if sistema.datos_actuales is not None:
-            st.session_state.data_frame = sistema.datos_actuales
-            st.session_state.fuente_actual = sistema.fuente_actual
-            
-            # Mostrar resumen similar al de rutinas.py
-            st.success(f"✅ Datos cargados exitosamente desde {sistema.fuente_actual}")
-            st.info(f"📊 Resumen: {len(sistema.datos_actuales)} registros, {len(sistema.datos_actuales.columns)} columnas")
-            
-            return sistema.datos_actuales, sistema.fuente_actual
-        else:
-            st.error("❌ No se pudieron cargar los datos")
-            return None, None
-        
-    except Exception as e:
-        st.error(f"❌ Error en ejecutar_rutina_database: {e}")
-        return None, None
-
-def ejecutar_calculos_astronomicos(datos, fuente):
-    """
-    Ejecuta el menú de cálculos astronómicos sobre los datos cargados
+    # Botón recargar
+    if st.button("🔄 Recargar Módulos", use_container_width=True):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        modules_to_reload = ['DB.entrada', 'DB.BaseDatos', 'rutinas', 'calculos']
+        for module_name in modules_to_reload:
+            if module_name in sys.modules:
+                try:
+                    importlib.reload(sys.modules[module_name])
+                except:
+                    pass
+        Rutina_cls, is_rutina_ok, _ = safe_import('rutinas', 'Rutina', force_reload=True)
+        if is_rutina_ok and Rutina_cls:
+            st.session_state.rutina_instance = Rutina_cls()
+        st.session_state.pagina = "🏠 Inicio"
+        st.rerun()
     
-    Args:
-        datos: DataFrame con los datos
-        fuente: Nombre de la fuente (SDSS, DESI, etc.)
+    st.markdown("<hr style='border-color: rgba(0, 229, 255, 0.2); margin: 1rem 0;'>", unsafe_allow_html=True)
     
-    Returns:
-        dict con resultados y gráficas
-    """
-    try:
-        if st.session_state.rutina_instance is None:
-            st.error("❌ No hay instancia de Rutina disponible")
-            return None
-        
-        sistema = st.session_state.rutina_instance
-        
-        # Preparar datos para cálculos (equivalente a enviarCalculos())
-        paquete = {
-            'datos': datos,
-            'fuente': fuente,
-            'columnas': list(datos.columns),
-            'n_registros': len(datos),
-            'metadatos': sistema.metadatos
-        }
-        
-        # Ejecutar cálculos usando MenuCalculos
-        # Nota: Necesitarás adaptar MenuCalculos para modo GUI
-        resultados = sistema.menu_calculos.mostrar_menu(datos)
-        
-        return resultados
-        
-    except Exception as e:
-        st.error(f"❌ Error en cálculos astronómicos: {e}")
-        return None
-
-def ejecutar_machine_learning(datos, fuente):
-    """
-    Ejecuta análisis de Machine Learning sobre los datos
+    # Navegación
+    pagina = st.radio(
+        "Navegación",
+        ["🏠 Inicio", "📂 Cargar Datos", "🔭 Cálculos", "🧮 Calculadoras", "🤖 Machine Learning", "📃 Reporte"],
+        key="nav_radio",
+        label_visibility="collapsed"
+    )
+    st.session_state.pagina = pagina
     
-    Args:
-        datos: DataFrame con los datos
-        fuente: Nombre de la fuente
+    st.markdown("<hr style='border-color: rgba(0, 229, 255, 0.2); margin: 1rem 0;'>", unsafe_allow_html=True)
     
-    Returns:
-        dict con resultados de ML
-    """
-    try:
-        if st.session_state.rutina_instance is None:
-            st.error("❌ No hay instancia de Rutina disponible")
-            return None
-        
-        sistema = st.session_state.rutina_instance
-        
-        # Ejecutar ML usando MenuML
-        # Nota: Necesitarás adaptar MenuML para modo GUI
-        resultados = sistema.menu_ml.mostrar_menu(datos)
-        
-        return resultados
-        
-    except Exception as e:
-        st.error(f"❌ Error en Machine Learning: {e}")
-        return None
-
-def generar_estadisticas_detalladas(datos, fuente):
-    """
-    Genera estadísticas detalladas del DataFrame (equivalente a procesarDatos())
-    
-    Args:
-        datos: DataFrame con los datos
-        fuente: Nombre de la fuente
-    
-    Returns:
-        dict con estadísticas completas
-    """
-    try:
-        if datos is None:
-            return None
-            
-        estadisticas = {
-            'fuente': fuente,
-            'n_registros': len(datos),
-            'n_columnas': len(datos.columns),
-            'columnas': list(datos.columns),
-            'tipos': datos.dtypes.astype(str).to_dict(),
-            'valores_nulos': datos.isnull().sum().to_dict(),
-            'estadisticas_numericas': {},
-            'preview': datos.head(10).to_dict('records')
-        }
-        
-        # Estadísticas descriptivas para columnas numéricas
-        numeric_cols = datos.select_dtypes(include=[np.number]).columns
-        for col in numeric_cols:
-            estadisticas['estadisticas_numericas'][col] = {
-                'mean': float(datos[col].mean()),
-                'std': float(datos[col].std()),
-                'min': float(datos[col].min()),
-                'max': float(datos[col].max()),
-                'q25': float(datos[col].quantile(0.25)),
-                'q50': float(datos[col].quantile(0.50)),
-                'q75': float(datos[col].quantile(0.75))
-            }
-        
-        return estadisticas
-        
-    except Exception as e:
-        st.error(f"❌ Error generando estadísticas: {e}")
-        return None
-
-# ============================================
-# PÁGINA ORBITAL (MENÚ PRINCIPAL)
-# ============================================
-def load_orbital_interface():
-    # GIF sin cortarse - quitar border-radius del contenedor
-    if gif_data_url:
-        clock_content = f'<img src="{gif_data_url}" alt="Reloj" style="width: 100%; height: 100%; object-fit: contain;">'
+    # Estado de datos
+    st.markdown("### 📊 Estado de Datos")
+    if st.session_state.datos_actuales is not None:
+        st.markdown(f"""
+            <div style="background: rgba(0, 255, 100, 0.1); border: 1px solid rgba(0, 255, 100, 0.3); 
+                        border-radius: 8px; padding: 1rem; margin-top: 0.5rem;">
+                <div style="color: #00ff64; font-weight: 600; margin-bottom: 0.5rem;">
+                    <span class="status-indicator status-active"></span> Datos Cargados
+                </div>
+                <div style="font-size: 0.85rem; color: #e0f7fa;">
+                    <strong>Fuente:</strong> {st.session_state.fuente_actual}<br>
+                    <strong>Registros:</strong> {len(st.session_state.datos_actuales):,}
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        clock_content = '<div style="width: 100%; height: 100%; background: radial-gradient(circle, #00e5ff, #0077ff); display: flex; align-items: center; justify-content: center; color: white; font-size: 48px;">🌌</div>'
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
-        <style>
-            :root {{
-                --space-dark: #0a0e17;
-                --space-blue: #1a2b47;
-                --accent: #00e5ff;
-                --text: #e0f7fa;
-            }}
-
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-
-            html, body {{
-                width: 100vw;
-                height: 100vh;
-                overflow: hidden;
-            }}
-
-            body {{
-                background: radial-gradient(circle at center, #000 0%, #001017 70%, #002024 100%);
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                overflow: hidden;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                position: relative;
-            }}
-
-            body::before {{
-                content: "";
-                position: fixed;
-                width: 200vw;
-                height: 200vh;
-                border-radius: 70%;
-                background: radial-gradient(circle, rgba(0,255,255,0) 40%, rgba(0,150,255,0.15) 30%, rgba(0,255,255,0.25) 100%);
-                filter: blur(120px);
-                z-index: 0;
-                animation: ambientShift 8s infinite ease-in-out;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-            }}
-
-            @keyframes ambientShift {{
-                0%, 100% {{ opacity: 0.3; transform: translate(-50%, -50%) scale(1); }}
-                50% {{ opacity: 0.8; transform: translate(-50%, -50%) scale(1.1); }}
-            }}
-
-            nav {{
-                position: fixed;
-                top: 0;
-                width: 100%;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 1rem 3rem;
-                background: rgba(10, 14, 23, 0.45);
-                backdrop-filter: blur(10px);
-                border-bottom: 1px solid rgba(0, 229, 255, 0.1);
-                z-index: 10;
-            }}
-
-            .nav-logo {{
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                font-weight: 500;
-                font-size: 1.4rem;
-                color: var(--text);
-                letter-spacing: 1px;
-                cursor: pointer;
-                transition: color 0.3s ease;
-            }}
-
-            .nav-logo:hover {{ color: var(--accent); }}
-
-            .nav-links {{
-                display: flex;
-                gap: 2.5rem;
-            }}
-
-            .nav-links a {{
-                color: var(--text);
-                text-decoration: none;
-                font-size: 1.1rem;
-                letter-spacing: 1px;
-                position: relative;
-                transition: color 0.3s ease;
-            }}
-
-            .nav-links a::before,
-            .nav-links a::after {{
-                content: "";
-                position: absolute;
-                width: 0;
-                height: 1px;
-                bottom: -3px;
-                background: var(--accent);
-                transition: width 0.3s ease;
-                opacity: 0.6;
-            }}
-
-            .nav-links a::before {{ left: 50%; }}
-            .nav-links a::after {{ right: 50%; }}
-
-            .nav-links a:hover {{
-                color: var(--accent);
-            }}
-
-            .nav-links a:hover::before,
-            .nav-links a:hover::after {{
-                width: 50%;
-            }}
-
-            .nav-action button {{
-                background: transparent;
-                border: 1px solid var(--accent);
-                color: var(--accent);
-                padding: 0.6rem 1.5rem;
-                border-radius: 8px;
-                cursor: pointer;
-                font-size: 1rem;
-                letter-spacing: 0.5px;
-                transition: all 0.3s ease;
-            }}
-
-            .nav-action button:hover {{
-                background: var(--accent);
-                color: var(--space-dark);
-                box-shadow: 0 0 15px var(--accent);
-            }}
-
-            .container {{
-                position: relative;
-                width: 1200px;
-                height: 800px;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                z-index: 2;
-            }}
-
-            .clock-container {{
-                position: absolute;
-                z-index: 3;
-                width: 150px;
-                height: 150px;
-                cursor: pointer;
-                transition: transform 0.3s ease;
-                /* SIN border-radius para que el GIF no se corte */
-            }}
-
-            .clock-container:hover {{ transform: scale(1.05); }}
-
-            .clock-content {{
-                width: 100%;
-                height: 100%;
-                transition: transform 0.1s ease-out;
-            }}
-
-            .menu {{
-                position: absolute;
-                width: 100%;
-                height: 100%;
-                z-index: 2;
-                display: flex;
-                justify-content: space-between;
-            }}
-
-            .menu-column {{
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                gap: 150px;
-                width: 280px;
-            }}
-
-            .menu-column.left {{ align-items: flex-end; }}
-            .menu-column.right {{ align-items: flex-start; }}
-
-            .menu button {{
-                background: transparent;
-                color: var(--text);
-                border: none;
-                font-size: 1.3rem;
-                cursor: pointer;
-                padding: 1.5rem 2rem;
-                letter-spacing: 2px;
-                text-transform: uppercase;
-                transition: color 0.3s ease;
-                outline: none;
-                width: 260px;
-                position: relative;
-                z-index: 4;
-            }}
-
-            .menu button:hover {{ color: var(--accent); }}
-
-            .menu button::before,
-            .menu button::after {{
-                content: "";
-                position: absolute;
-                width: 0;
-                height: 0;
-                border: 2px solid var(--accent);
-                opacity: 0;
-                transition: all 0.4s ease;
-            }}
-
-            .menu button::before {{
-                top: 0; left: 0;
-                border-right: none; border-bottom: none;
-            }}
-
-            .menu button::after {{
-                bottom: 0; right: 0;
-                border-left: none; border-top: none;
-            }}
-
-            .menu button:hover::before,
-            .menu button:hover::after {{
-                width: 100%;
-                height: 100%;
-                opacity: 1;
-            }}
-
-            .connection-line {{
-                position: absolute;
-                background: var(--accent);
-                height: 3px;
-                width: 0;
-                z-index: 1;
-                opacity: 0;
-                box-shadow: 0 0 15px var(--accent);
-                transition: all 0.5s ease;
-                pointer-events: none;
-                transform-origin: left center;
-            }}
-
-            .line-active {{
-                opacity: 1 !important;
-                width: var(--line-width, 300px) !important;
-            }}
-
-            #line-analisis {{
-                top: 200px;
-                left: 600px;
-                transform: rotate(150deg);
-                --line-width: 300px;
-            }}
-
-            #line-mis-analisis {{
-                top: 500px;
-                left: 600px;
-                transform: rotate(210deg);
-                --line-width: 300px;
-            }}
-
-            #line-aprende {{
-                top: 200px;
-                left: 600px;
-                transform: rotate(30deg);
-                --line-width: 300px;
-            }}
-
-            #line-simula {{
-                top: 500px;
-                left: 600px;
-                transform: rotate(-30deg);
-                --line-width: 300px;
-            }}
-        </style>
-    </head>
-    <body>
-        <nav>
-            <div class="nav-logo">
-                <span style="font-size: 1.8rem;">◉</span>
-                AstroQuipu
-            </div>
-
-            <div class="nav-links">
-                <a href="?page=descripcion">Descripción</a>
-                <a href="?page=funciones">Funciones</a>
-                <a href="?page=analisis">Cálculo</a>
-                <a href="?page=simula">Simula</a>
-                <a href="?page=aprende">Aprende</a>
-            </div>
-
-            <div class="nav-action">
-                <a href="?page=perfil" style="text-decoration: none;">
-                    <button>Mi Perfil</button>
-                </a>
-            </div>
-        </nav>
-
-        <div class="container">
-            <div class="clock-container" id="clock">
-                <div class="clock-content">
-                    {clock_content}
+        st.markdown("""
+            <div style="background: rgba(255, 68, 68, 0.1); border: 1px solid rgba(255, 68, 68, 0.3); 
+                        border-radius: 8px; padding: 1rem; margin-top: 0.5rem;">
+                <div style="color: #ff6b6b; font-weight: 600;">
+                    <span class="status-indicator status-inactive"></span> Sin datos cargados
+                </div>
+                <div style="font-size: 0.85rem; color: rgba(224, 247, 250, 0.7); margin-top: 0.5rem;">
+                    Selecciona una fuente de datos para comenzar
                 </div>
             </div>
-
-            <div class="menu">
-                <div class="menu-column left">
-                    <a href="?page=analisis" style="text-decoration: none;">
-                        <button data-line="line-analisis">Cálculo de Datos</button>
-                    </a>
-                    <a href="?page=mis_analisis" style="text-decoration: none;">
-                        <button data-line="line-mis-analisis">Mis Análisis</button>
-                    </a>
-                </div>
-                <div class="menu-column right">
-                    <a href="?page=aprende" style="text-decoration: none;">
-                        <button data-line="line-aprende">Aprende del Universo</button>
-                    </a>
-                    <a href="?page=simula" style="text-decoration: none;">
-                        <button data-line="line-simula">Simula el Universo</button>
-                    </a>
-                </div>
-            </div>
-
-            <div class="connection-line" id="line-analisis"></div>
-            <div class="connection-line" id="line-mis-analisis"></div>
-            <div class="connection-line" id="line-aprende"></div>
-            <div class="connection-line" id="line-simula"></div>
-        </div>
-
-        <script>
-            const clock = document.getElementById("clock");
-            const clockContent = clock.querySelector(".clock-content");
-
-            document.addEventListener("mousemove", (e) => {{
-                const rect = clock.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                const deltaX = (e.clientX - centerX) / 30;
-                const deltaY = (e.clientY - centerY) / 30;
-                clockContent.style.transform = `translate(${{deltaX}}px, ${{deltaY}}px)`;
-            }});
-
-            document.addEventListener("mouseleave", () => {{
-                clockContent.style.transform = "translate(0,0)";
-            }});
-
-            const buttons = document.querySelectorAll('.menu button');
-            const lines = document.querySelectorAll('.connection-line');
-
-            buttons.forEach(btn => {{
-                const line = document.getElementById(btn.dataset.line);
-                
-                btn.addEventListener('mouseenter', () => {{
-                    lines.forEach(l => l.classList.remove('line-active'));
-                    if (line) line.classList.add('line-active');
-                }});
-                
-                btn.addEventListener('mouseleave', () => {{
-                    setTimeout(() => {{
-                        if (line) line.classList.remove('line-active');
-                    }}, 150);
-                }});
-            }});
-        </script>
-    </body>
-    </html>
-    """
-    return html_content
-
-# ============================================
-# PÁGINA DE ANÁLISIS (Dashboard completo)
-# ============================================
-def load_dashboard_html():
-    # Cargar datos
-    if st.session_state.csv_data is None:
-        st.session_state.csv_data = load_galaxy_data()
-    
-    if st.session_state.analysis_results is None and st.session_state.csv_data:
-        st.session_state.analysis_results = analyze_csv_data()
-    
-    csv_data_json = json.dumps(st.session_state.csv_data) if st.session_state.csv_data else "[]"
-    analysis_results_json = json.dumps(st.session_state.analysis_results) if st.session_state.analysis_results else "[]"
-    
-    # Aquí va TODO el HTML del dashboard que te pasé antes
-    # Por brevedad, solo indico que uses el HTML completo del dashboard anterior
-    html_content = f"""
-
-
-     <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AstroQuipu - Dashboard de Análisis</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-        <style>
-            :root {{
-                --space-dark: #0a0e17;
-                --space-blue: #1a2b47;
-                --accent: #00e5ff;
-                --text: #e0f7fa;
-                --border: rgba(0, 229, 255, 0.2);
-                --sidebar-bg: rgba(10, 14, 23, 0.9);
-                --card-bg: rgba(26, 43, 71, 0.6);
-                --hover-bg: rgba(0, 229, 255, 0.1);
-            }}
-
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
-            html, body {{ width: 100%; height: 100%; overflow: hidden; }}
-
-            body {{
-                background: radial-gradient(circle at center, #000 0%, #001017 70%, #002024 100%);
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                overflow: hidden;
-            }}
-            
-
-            body::before {{
-                content: "";
-                position: fixed;
-                width: 200%;
-                height: 200%;
-                border-radius: 70%;
-                background: radial-gradient(circle, rgba(0,255,255,0) 40%, rgba(0,150,255,0.15) 30%, rgba(0,255,255,0.25) 100%);
-                filter: blur(120px);
-                z-index: -1;
-                animation: ambientShift 8s infinite ease-in-out;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-            }}
-
-            @keyframes ambientShift {{
-                0%, 100% {{ opacity: 0.3; transform: translate(-50%, -50%) scale(1); }}
-                50% {{ opacity: 0.8; transform: translate(-50%, -50%) scale(1.1); }}
-            }}
-
-            .navbar {{
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 0.8rem 1.5rem;
-                background: rgba(10, 14, 23, 0.85);
-                backdrop-filter: blur(10px);
-                border-bottom: 1px solid var(--border);
-                position: sticky;
-                top: 0;
-                z-index: 100;
-                width: 100%;
-            }}
-
-            .navbar-left {{ display: flex; align-items: center; gap: 1rem; }}
-
-            .navbar-logo {{
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                font-weight: 600;
-                font-size: 1.2rem;
-                color: var(--text);
-                cursor: pointer;
-                transition: color 0.3s ease;
-            }}
-
-            .navbar-logo:hover {{ color: var(--accent); }}
-
-            .navbar-search {{ position: relative; width: 300px; }}
-
-            .navbar-search input {{
-                width: 100%;
-                padding: 0.5rem 1rem 0.5rem 2.5rem;
-                background: rgba(26, 43, 71, 0.6);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                font-size: 0.9rem;
-                transition: all 0.3s ease;
-            }}
-
-            .navbar-search input:focus {{
-                outline: none;
-                border-color: var(--accent);
-                box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.2);
-            }}
-
-            .navbar-search::before {{
-                content: "○";
-                position: absolute;
-                left: 0.8rem;
-                top: 50%;
-                transform: translateY(-50%);
-                font-size: 0.9rem;
-                color: var(--text);
-                opacity: 0.7;
-            }}
-
-            .navbar-right {{ display: flex; align-items: center; gap: 1rem; }}
-
-            .navbar-button {{
-                background: transparent;
-                border: 1px solid var(--border);
-                color: var(--text);
-                padding: 0.5rem 1rem;
-                border-radius: 6px;
-                cursor: pointer;
-                font-family: 'Outfit', sans-serif;
-                font-size: 0.9rem;
-                transition: all 0.3s ease;
-            }}
-
-            .navbar-button:hover {{
-                background: var(--hover-bg);
-                border-color: var(--accent);
-            }}
-
-            .navbar-avatar {{
-                width: 32px;
-                height: 32px;
-                border-radius: 50%;
-                background: linear-gradient(135deg, var(--accent), #0077ff);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: var(--space-dark);
-                font-weight: bold;
-                cursor: pointer;
-            }}
-
-            .dashboard-container {{
-                display: flex;
-                width: 100%;
-                height: calc(100vh - 70px);
-                margin: 0;
-                padding: 0;
-                gap: 0;
-                overflow: hidden;
-            }}
-
-            .sidebar {{
-                width: 260px;
-                flex-shrink: 0;
-                background: var(--sidebar-bg);
-                border-right: 1px solid var(--border);
-                overflow: hidden;
-                backdrop-filter: blur(10px);
-                height: 100%;
-                overflow-y: auto;
-            }}
-
-            .sidebar-header {{
-                padding: 1.5rem;
-                border-bottom: 1px solid var(--border);
-            }}
-
-            .sidebar-title {{
-                font-size: 1.1rem;
-                font-weight: 600;
-                margin-bottom: 0.5rem;
-            }}
-
-            .sidebar-subtitle {{
-                font-size: 0.85rem;
-                opacity: 0.7;
-            }}
-
-            .sidebar-menu {{
-                padding: 1rem 0;
-            }}
-
-            .sidebar-item {{
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                padding: 0.75rem 1.5rem;
-                color: var(--text);
-                text-decoration: none;
-                transition: all 0.3s ease;
-                position: relative;
-                cursor: pointer;
-            }}
-
-            .sidebar-item:hover {{
-                background: var(--hover-bg);
-            }}
-
-            .sidebar-item.active {{
-                background: rgba(0, 229, 255, 0.1);
-                color: var(--accent);
-                font-weight: 500;
-            }}
-
-            .sidebar-item.active::before {{
-                content: "";
-                position: absolute;
-                left: 0;
-                top: 0;
-                height: 100%;
-                width: 3px;
-                background: var(--accent);
-            }}
-
-            .sidebar-icon {{
-                font-size: 1.1rem;
-                width: 20px;
-                text-align: center;
-            }}
-
-            .main-content {{
-                flex: 1;
-                min-width: 0;
-                height: 100%;
-                overflow-y: auto;
-                padding: 1.5rem;
-            }}
-
-            .content-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 1.5rem;
-            }}
-
-            .content-title {{
-                font-size: 1.5rem;
-                font-weight: 600;
-            }}
-
-            .content-actions {{
-                display: flex;
-                gap: 0.75rem;
-            }}
-
-            .btn {{
-                display: inline-flex;
-                align-items: center;
-                gap: 0.5rem;
-                padding: 0.6rem 1.2rem;
-                background: transparent;
-                border: 1px solid var(--border);
-                color: var(--text);
-                border-radius: 6px;
-                font-family: 'Outfit', sans-serif;
-                font-size: 0.9rem;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                position: relative;
-                overflow: hidden;
-            }}
-
-            .btn:hover {{
-                border-color: var(--accent);
-                color: var(--accent);
-            }}
-
-            .btn-primary {{
-                background: rgba(0, 229, 255, 0.1);
-                border-color: var(--accent);
-                color: var(--accent);
-            }}
-
-            .btn-primary:hover {{
-                background: rgba(0, 229, 255, 0.2);
-                box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
-            }}
-
-            .card {{
-                background: var(--card-bg);
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                padding: 1.5rem;
-                margin-bottom: 1.5rem;
-                backdrop-filter: blur(10px);
-                transition: all 0.3s ease;
-            }}
-
-            .card:hover {{
-                border-color: rgba(0, 229, 255, 0.4);
-                box-shadow: 0 0 15px rgba(0, 229, 255, 0.1);
-            }}
-
-            .card-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 1.25rem;
-            }}
-
-            .card-title {{
-                font-size: 1.2rem;
-                font-weight: 600;
-            }}
-
-            .card-description {{
-                color: rgba(224, 247, 250, 0.8);
-                margin-bottom: 1.5rem;
-                line-height: 1.5;
-            }}
-
-            .form-group {{
-                margin-bottom: 1.25rem;
-            }}
-
-            .form-label {{
-                display: block;
-                margin-bottom: 0.5rem;
-                font-weight: 500;
-            }}
-
-            .form-control {{
-                width: 100%;
-                padding: 0.75rem 1rem;
-                background: rgba(10, 14, 23, 0.7);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                transition: all 0.3s ease;
-            }}
-
-            .form-control:focus {{
-                outline: none;
-                border-color: var(--accent);
-                box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.2);
-            }}
-
-            .form-row {{
-                display: flex;
-                gap: 1rem;
-            }}
-
-            .form-row .form-group {{
-                flex: 1;
-            }}
-
-            .result-box {{
-                background: rgba(0, 229, 255, 0.1);
-                border: 1px solid var(--accent);
-                border-radius: 8px;
-                padding: 1.25rem;
-                margin-top: 1.5rem;
-            }}
-
-            .result-title {{
-                color: var(--accent);
-                font-weight: 600;
-                margin-bottom: 0.75rem;
-            }}
-
-            .result-value {{
-                font-size: 1.5rem;
-                font-weight: 700;
-                color: var(--accent);
-                margin: 0.5rem 0;
-            }}
-
-            .result-details {{
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-                gap: 0.75rem;
-                margin-top: 1rem;
-            }}
-
-            .result-detail {{
-                display: flex;
-                justify-content: space-between;
-                padding: 0.5rem 0;
-                border-bottom: 1px solid rgba(0, 229, 255, 0.2);
-            }}
-
-            .tabs {{
-                display: flex;
-                border-bottom: 1px solid var(--border);
-                margin-bottom: 1.5rem;
-            }}
-
-            .tab {{
-                padding: 0.75rem 1.5rem;
-                background: transparent;
-                border: none;
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                font-size: 0.9rem;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                position: relative;
-            }}
-
-            .tab:hover {{ color: var(--accent); }}
-
-            .tab.active {{
-                color: var(--accent);
-                font-weight: 500;
-            }}
-
-            .tab.active::after {{
-                content: "";
-                position: absolute;
-                bottom: -1px;
-                left: 0;
-                width: 100%;
-                height: 2px;
-                background: var(--accent);
-            }}
-
-            .data-table-container {{
-                position: relative;
-                margin: 1.5rem 0;
-                border: 1px solid var(--border);
-                border-radius: 8px;
-                overflow: hidden;
-            }}
-
-            .table-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 1rem;
-                background: rgba(10, 14, 23, 0.8);
-                border-bottom: 1px solid var(--border);
-            }}
-
-            .table-title {{
-                font-weight: 600;
-                color: var(--accent);
-            }}
-
-            .table-download-btn {{
-                background: transparent;
-                border: 1px solid var(--border);
-                color: var(--text);
-                padding: 0.4rem 0.8rem;
-                border-radius: 4px;
-                font-size: 0.8rem;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                display: flex;
-                align-items: center;
-                gap: 0.4rem;
-            }}
-
-            .table-download-btn:hover {{
-                background: var(--hover-bg);
-                border-color: var(--accent);
-                color: var(--accent);
-            }}
-
-            .data-table {{
-                width: 100%;
-                border-collapse: collapse;
-                background: rgba(10, 14, 23, 0.6);
-            }}
-
-            .data-table th {{
-                background: rgba(26, 43, 71, 0.8);
-                padding: 0.75rem 1rem;
-                text-align: left;
-                font-weight: 600;
-                color: var(--accent);
-                border-bottom: 1px solid var(--border);
-            }}
-
-            .data-table td {{
-                padding: 0.75rem 1rem;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            }}
-
-            .data-table tr:last-child td {{
-                border-bottom: none;
-            }}
-
-            .data-table tr:hover {{
-                background: rgba(0, 229, 255, 0.05);
-            }}
-
-            .right-panel {{
-                width: 320px;
-                flex-shrink: 0;
-                height: 100%;
-                overflow-y: auto;
-                padding: 1.5rem;
-                border-left: 1px solid var(--border);
-            }}
-
-            .panel-card {{
-                background: var(--card-bg);
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                padding: 1.5rem;
-                margin-bottom: 1.5rem;
-                backdrop-filter: blur(10px);
-            }}
-
-            .panel-title {{
-                font-size: 1.1rem;
-                font-weight: 600;
-                margin-bottom: 1rem;
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-            }}
-
-            .activity-list {{
-                list-style: none;
-            }}
-
-            .activity-item {{
-                padding: 0.75rem 0;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-                display: flex;
-                gap: 0.75rem;
-            }}
-
-            .activity-item:last-child {{
-                border-bottom: none;
-            }}
-
-            .activity-icon {{
-                width: 32px;
-                height: 32px;
-                border-radius: 50%;
-                background: rgba(0, 229, 255, 0.2);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                flex-shrink: 0;
-                color: var(--accent);
-            }}
-
-            .activity-content {{
-                flex: 1;
-            }}
-
-            .activity-title {{
-                font-weight: 500;
-                margin-bottom: 0.25rem;
-            }}
-
-            .activity-meta {{
-                font-size: 0.8rem;
-                opacity: 0.7;
-            }}
-
-            .tab-content {{
-                display: none;
-            }}
-
-            .tab-content.active {{
-                display: block;
-                animation: fadeIn 0.3s ease-in;
-            }}
-
-            @keyframes fadeIn {{
-                from {{ opacity: 0; transform: translateY(10px); }}
-                to {{ opacity: 1; transform: translateY(0); }}
-            }}
-
-            @media (max-width: 1024px) {{
-                .dashboard-container {{ flex-direction: column; }}
-                .sidebar, .right-panel {{ width: 100%; height: auto; }}
-                .navbar-search {{ width: 200px; }}
-            }}
-
-            @media (max-width: 768px) {{
-                .navbar {{ flex-wrap: wrap; gap: 1rem; }}
-                .navbar-search {{ width: 100%; order: 3; }}
-                .form-row {{ flex-direction: column; gap: 0; }}
-                .data-table {{ display: block; overflow-x: auto; }}
-            }}
-            
-            /* Asegurar que los formularios se muestren correctamente */
-.db-params {{
-    display: none;
-    animation: slideDown 0.3s ease;
-    margin-top: 1.5rem;
-}}
-
-.db-params.show {{
-    display: block !important;
-}}
-
-@keyframes slideDown {{
-    from {{
-        opacity: 0;
-        transform: translateY(-10px);
-    }}
-    to {{
-        opacity: 1;
-        transform: translateY(0);
-    }}
-}}
-
-/* Ocultar elementos */
-.hidden {{
-    display: none !important;
-}}
-
-/* Mostrar elementos */
-.show {{
-    display: block !important;
-}}
-        
-        </style>
-    </head>
-    <body>
-        <nav class="navbar">
-            <div class="navbar-left">
-                <div class="navbar-logo" onclick="navigateTo('orbital')">
-                    <span style="font-size: 1.4rem;">◉</span>
-                    AstroQuipu
-                </div>
-                <div class="navbar-search">
-                    <input type="text" placeholder="Buscar análisis, cálculos...">
-                </div>
-            </div>
-            <div class="navbar-right">
-                <button class="navbar-button">+ Nuevo</button>
-                <button class="navbar-button">↑ Importar</button>
-                <div class="navbar-avatar">AQ</div>
-            </div>
-        </nav>
-
-        <div class="dashboard-container">
-            <aside class="sidebar">
-                <div class="sidebar-header">
-                    <div class="sidebar-title">Laboratorio Astronómico</div>
-                    <div class="sidebar-subtitle">Herramientas de cálculo</div>
-                </div>
-                <div class="sidebar-menu">
-                    <div class="sidebar-item active" onclick="switchTab('hubble')">
-                        <span class="sidebar-icon">◉</span>
-                        <span>Constante de Hubble</span>
-                    </div>
-                    <div class="sidebar-item" onclick="switchTab('redshift')">
-                        <span class="sidebar-icon">↭</span>
-                        <span>Redshift</span>
-                    </div>
-                    <div class="sidebar-item" onclick="switchTab('angular')">
-                        <span class="sidebar-icon">⟳</span>
-                        <span>Velocidad Angular</span>
-                    </div>
-                    <div class="sidebar-item" onclick="switchTab('orbits')">
-                        <span class="sidebar-icon">⌾</span>
-                        <span>Órbitas</span>
-                    </div>
-                    <div class="sidebar-item" onclick="switchTab('csv')">
-                        <span class="sidebar-icon">▣</span>
-                        <span>Análisis CSV</span>
-                    </div>
-                    <div class="sidebar-item">
-                        <span class="sidebar-icon">📊</span>
-                        <span>Mis Análisis</span>
-                    </div>
-                    <div class="sidebar-item">
-                        <span class="sidebar-icon">⚙</span>
-                        <span>Configuración</span>
-                    </div>
-                </div>
-            </aside>
-
-            <main class="main-content">
-                <div class="content-header">
-                    <h1 class="content-title" id="content-main-title">Cálculo de la Constante de Hubble</h1>
-                    <div class="content-actions">
-                        <button class="btn" onclick="downloadResults()">
-                            <span>⤓</span> Descargar
-                        </button>
-                        <button class="btn btn-primary">
-                            <span>+</span> Nuevo
-                        </button>
-                    </div>
-                </div>
-
-                <div class="tabs">
-                    <button class="tab active" data-tab="hubble" onclick="switchTab('hubble')">Cálculo básico</button>
-                    <button class="tab" data-tab="csv" onclick="switchTab('csv')">Análisis CSV</button>
-                </div>
-
-                <!-- PESTAÑA: Constante de Hubble -->
-                <div class="tab-content active" id="hubble-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Parámetros de entrada</h2>
-                        </div>
-                        <p class="card-description">
-                            Introduce los valores de velocidad de recesión y distancia para calcular la constante de Hubble (H₀).
-                        </p>
-                        
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label" for="velocidad">Velocidad de recesión (km/s)</label>
-                                <input type="number" id="velocidad" class="form-control" placeholder="1500" value="1500">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="distancia">Distancia (Mpc)</label>
-                                <input type="number" id="distancia" class="form-control" placeholder="22.0" value="22.0">
-                            </div>
-                        </div>
-                        
-                        <button class="btn btn-primary" onclick="calculateHubble()" style="margin-top: 1rem;">
-                            Calcular H₀
-                        </button>
-                        
-                        <div class="result-box" id="hubble-result" style="display: none;">
-                            <h3 class="result-title">Resultado del cálculo</h3>
-                            <div class="result-value" id="hubble-value">H₀ = 68.18 km/s/Mpc</div>
-                            <div class="result-details">
-                                <div class="result-detail">
-                                    <span>Velocidad:</span>
-                                    <span id="result-velocidad">1,500 km/s</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Distancia:</span>
-                                    <span id="result-distancia">22.0 Mpc</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Fecha:</span>
-                                    <span id="calculation-date"></span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Información sobre la Constante de Hubble</h2>
-                        </div>
-                        <p class="card-description">
-                            La constante de Hubble (H₀) es uno de los parámetros más importantes en cosmología. 
-                            Representa la tasa de expansión del universo y se expresa en km/s por megaparsec (Mpc).
-                        </p>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label">Valor aceptado actualmente</label>
-                                <input type="text" class="form-control" value="67.4 ± 0.5 km/s/Mpc" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Método de medición</label>
-                                <input type="text" class="form-control" value="Planck (CMB)" readonly>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- PESTAÑA: Redshift -->
-                <div class="tab-content" id="redshift-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Cálculo de Redshift</h2>
-                        </div>
-                        <p class="card-description">
-                            El redshift (z) mide cuánto se ha desplazado la longitud de onda de la luz de una galaxia hacia el rojo debido a su alejamiento.
-                        </p>
-                        
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label" for="longitud_obs">Longitud de onda observada (nm)</label>
-                                <input type="number" id="longitud_obs" class="form-control" placeholder="658.0" value="658.0" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="longitud_emit">Longitud de onda emitida (nm)</label>
-                                <input type="number" id="longitud_emit" class="form-control" placeholder="656.3" value="656.3" step="0.1">
-                            </div>
-                        </div>
-                        
-                        <button class="btn btn-primary" onclick="calculateRedshift()" style="margin-top: 1rem;">
-                            Calcular Redshift
-                        </button>
-                        
-                        <div class="result-box" id="redshift-result" style="display: none;">
-                            <h3 class="result-title">Resultado del cálculo</h3>
-                            <div class="result-value" id="redshift-value">z = 0.002591</div>
-                            <div class="result-details">
-                                <div class="result-detail">
-                                    <span>Longitud observada:</span>
-                                    <span id="result-long-obs">658.0 nm</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Longitud emitida:</span>
-                                    <span id="result-long-emit">656.3 nm</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Velocidad (v ≈ cz):</span>
-                                    <span id="result-velocity-z">776.8 km/s</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Distancia (Ley Hubble):</span>
-                                    <span id="result-distance-z">11.1 Mpc</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Información sobre Redshift</h2>
-                        </div>
-                        <p class="card-description">
-                            La línea H-alpha del hidrógeno tiene una longitud de onda de 656.3 nm en el laboratorio. 
-                            Esta línea es comúnmente usada para medir el redshift de galaxias.
-                        </p>
-                    </div>
-                </div>
-
-                <!-- PESTAÑA: Velocidad Angular -->
-                <div class="tab-content" id="angular-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Cálculo de Velocidad Angular</h2>
-                        </div>
-                        <p class="card-description">
-                            Calcula la velocidad angular de un objeto en órbita a partir de su velocidad lineal y radio orbital.
-                        </p>
-                        
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label" for="vel_lineal">Velocidad lineal (km/s)</label>
-                                <input type="number" id="vel_lineal" class="form-control" placeholder="220" value="220">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="radio_orbit">Radio de órbita (km)</label>
-                                <input type="number" id="radio_orbit" class="form-control" placeholder="2.46e17" value="2.46e17" step="1e15">
-                            </div>
-                        </div>
-                        
-                        <button class="btn btn-primary" onclick="calculateAngular()" style="margin-top: 1rem;">
-                            Calcular Velocidad Angular
-                        </button>
-                        
-                        <div class="result-box" id="angular-result" style="display: none;">
-                            <h3 class="result-title">Resultado del cálculo</h3>
-                            <div class="result-value" id="angular-value">ω = 8.94 × 10⁻¹³ rad/s</div>
-                            <div class="result-details">
-                                <div class="result-detail">
-                                    <span>Velocidad lineal:</span>
-                                    <span id="result-vel-linear">220 km/s</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Radio:</span>
-                                    <span id="result-radio">2.46 × 10¹⁷ km</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Período orbital:</span>
-                                    <span id="result-period">222 millones de años</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Ejemplo: El Sol en la Vía Láctea</h2>
-                        </div>
-                        <p class="card-description">
-                            El Sol orbita alrededor del centro galáctico a aproximadamente 220 km/s, 
-                            a una distancia de unos 26,000 años luz (≈ 2.46 × 10¹⁷ km).
-                        </p>
-                    </div>
-                </div>
-
-                <!-- PESTAÑA: Órbitas -->
-                <div class="tab-content" id="orbits-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Cálculo de Parámetros Orbitales</h2>
-                        </div>
-                        <p class="card-description">
-                            Calcula la velocidad orbital y período de un objeto en órbita circular alrededor de una masa central.
-                        </p>
-                        
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label" for="masa_central">Masa central (kg)</label>
-                                <input type="number" id="masa_central" class="form-control" placeholder="5.972e24" value="5.972e24" step="1e23">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="radio_orbital">Radio de órbita (m)</label>
-                                <input type="number" id="radio_orbital" class="form-control" placeholder="6771000" value="6771000">
-                            </div>
-                        </div>
-                        
-                        <button class="btn btn-primary" onclick="calculateOrbit()" style="margin-top: 1rem;">
-                            Calcular Órbita
-                        </button>
-                        
-                        <div class="result-box" id="orbit-result" style="display: none;">
-                            <h3 class="result-title">Resultado del cálculo</h3>
-                            <div class="result-value" id="orbit-velocity">v = 7.67 km/s</div>
-                            <div class="result-details">
-                                <div class="result-detail">
-                                    <span>Velocidad orbital:</span>
-                                    <span id="result-v-orbit">7.67 km/s</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Período orbital:</span>
-                                    <span id="result-t-orbit">1.55 horas</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Altura sobre superficie:</span>
-                                    <span id="result-altitude">400 km</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Ejemplo: Estación Espacial Internacional</h2>
-                        </div>
-                        <p class="card-description">
-                            La ISS orbita a aproximadamente 400 km sobre la superficie terrestre, 
-                            completando una órbita cada ~92 minutos a una velocidad de ~7.66 km/s.
-                        </p>
-                    </div>
-                </div>
-
-                <!-- PESTAÑA: Análisis CSV -->
-                <div class="tab-content" id="csv-tab">
-    <div class="db-selector">
-        <h3 class="db-selector-title">🌌 Sistema de Análisis Astronómico</h3>
-        <p style="margin-bottom:1.5rem;opacity:.8">
-            Consulta bases de datos astronómicas y realiza análisis completos
+        """, unsafe_allow_html=True)
+
+# --- 5. CONTENIDO PRINCIPAL ---
+
+# === PÁGINA DE INICIO ===
+if pagina == "🏠 Inicio":
+    st.markdown("""
+        <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">🌌 AstroQuipu</h1>
+        <p style="font-size: 1.2rem; color: rgba(224, 247, 250, 0.8); margin-bottom: 2rem;">
+            Sistema de Análisis de Datos Astronómicos
         </p>
-        
-        <!-- DROPDOWN DESPLEGABLE -->
-        <div class="form-group" style="margin-bottom: 2rem;">
-            <label class="form-label" style="font-size: 1rem; font-weight: 600; color: var(--accent); margin-bottom: 1rem; display: block;">
-                🗄️ Selecciona la fuente de datos
-            </label>
-            <select id="database-selector" class="form-control" 
-                    style="font-size: 1rem; padding: 1rem; cursor: pointer;"
-                    onchange="selectDatabaseSource(parseInt(this.value))">
-                <option value="1" selected>📁 Archivos Locales (CSV/DAT)</option>
-                <option value="2">🌌 SDSS - Galaxias y Espectros</option>
-                <option value="3">🔭 DESI - Objetos del Cosmos Profundo</option>
-                <option value="4">🪐 NASA ESI - Exoplanetas</option>
-                <option value="5">☄️ NEO - Asteroides y Cometas</option>
-            </select>
-            <p style="font-size: 0.85rem; opacity: 0.7; margin-top: 0.5rem;">
-                Elige la base de datos astronómica que deseas consultar
-            </p>
-        </div>
-
-        <!-- INDICADOR DE SELECCIÓN -->
-        <div id="fuente-indicator" class="fuente-seleccionada">
-            📡 Fuente seleccionada: <strong>Archivos Locales</strong>
-        </div>
-
-        <!-- FORMULARIO DE PARÁMETROS (oculto por defecto) -->
-        <div id="params-form" class="db-params">
-            <h3 style="margin:2rem 0 1rem;color:var(--accent)">
-                📋 Parámetros de Consulta
-            </h3>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">RA (Ascensión Recta, grados)</label>
-                    <input type="number" id="param-ra" class="form-control" 
-                           value="180.0" step="0.1">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">DEC (Declinación, grados)</label>
-                    <input type="number" id="param-dec" class="form-control" 
-                           value="0.0" step="0.1">
-                </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+            <div class="custom-card">
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">📂 Cargar Datos</h3>
+                <p style="font-size: 0.9rem;">Conecta con SDSS, DESI, NASA ESI, NEO o carga archivos locales.</p>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">z-min (Redshift mínimo)</label>
-                    <input type="number" id="param-zmin" class="form-control" 
-                           value="0.05" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">z-max (Redshift máximo)</label>
-                    <input type="number" id="param-zmax" class="form-control" 
-                           value="0.3" step="0.01">
-                </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+            <div class="custom-card">
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">🔭 Análisis</h3>
+                <p style="font-size: 0.9rem;">Cálculos cosmológicos, orbitales y visualizaciones 3D interactivas.</p>
             </div>
-        </div>
-
-        <!-- BOTÓN DE CONSULTA -->
-        <button class="btn btn-primary" onclick="ejecutarConsulta()" 
-                style="margin-top:1.5rem;width:100%">
-            🔍 Consultar y Cargar Datos
-        </button>
-
-        <!-- ESTADO DE CARGA -->
-        <div id="loading-status" class="hidden" style="margin-top:1rem">
-            <div style="padding:1rem;background:rgba(0,229,255,.1);
-                        border-left:3px solid var(--accent);border-radius:4px">
-                <span id="loading-text">⏳ Consultando base de datos...</span>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown("""
+            <div class="custom-card">
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">🤖 Machine Learning</h3>
+                <p style="font-size: 0.9rem;">Clustering, clasificación y análisis predictivo de datos astronómicos.</p>
             </div>
-        </div>
-
-        <!-- MENÚ POST-CARGA -->
-        <div id="post-load-menu" class="hidden card" style="margin-top:1.5rem">
-            <h3 class="card-title">✅ Datos Cargados Exitosamente</h3>
-            <p id="load-summary" style="margin-bottom:1.5rem;opacity:.8">
-                Se cargaron X registros desde [Fuente]
-            </p>
-            
-            <h4 style="margin-bottom:1rem;color:var(--accent)">
-                🔬 ¿Qué deseas hacer con los datos?
-            </h4>
-            
-            <div style="display:grid;gap:1rem">
-                <button class="btn btn-primary" onclick="abrirCalculos()">
-                    📊 Realizar Cálculos Astronómicos
-                </button>
-                <button class="btn btn-primary" onclick="abrirML()">
-                    🤖 Herramientas de Machine Learning
-                </button>
-                <button class="btn" onclick="verEstadisticas()">
-                    📈 Ver Estadísticas y Gráficas
-                </button>
-                <button class="btn" onclick="cargarNuevosDatos()">
-                    🔄 Cargar otro set de datos
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-              
-                    <div class="card">
-                        <div class="card-header">
-                            <h2 class="card-title">Análisis de Datos de Galaxias</h2>
-                        </div>
-                        <p class="card-description">
-                            Análisis completo de los datos de galaxias del archivo CSV. Se calcula automáticamente la constante de Hubble para cada galaxia.
-                        </p>
-
-                        <button class="btn btn-primary" onclick="loadCSVData()">
-                            ▣ Analizar CSV
-                        </button>
-
-                        <div class="data-table-container" id="original-data-container" style="display: none;">
-                            <div class="table-header">
-                                <div class="table-title">Datos Originales</div>
-                                <button class="table-download-btn" onclick="downloadOriginalData()">
-                                    <span>⤓</span> CSV
-                                </button>
-                            </div>
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Galaxia</th>
-                                        <th>Velocidad (km/s)</th>
-                                        <th>Distancia (Mpc)</th>
-                                        <th>Long. Obs (nm)</th>
-                                        <th>Long. Emit (nm)</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="original-data-body"></tbody>
-                            </table>
-                        </div>
-
-                        <div class="data-table-container" id="analysis-results-container" style="display: none;">
-                            <div class="table-header">
-                                <div class="table-title">Resultados del Análisis</div>
-                                <button class="table-download-btn" onclick="downloadAnalysisResults()">
-                                    <span>⤓</span> CSV
-                                </button>
-                            </div>
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Galaxia</th>
-                                        <th>Velocidad</th>
-                                        <th>Distancia</th>
-                                        <th>H₀ (km/s/Mpc)</th>
-                                        <th>Redshift (z)</th>
-                                        <th>Dist. via z (Mpc)</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="analysis-results-body"></tbody>
-                            </table>
-                        </div>
-
-                        <div class="result-box" id="csv-statistics" style="display: none;">
-                            <h3 class="result-title">Estadísticas del Análisis</h3>
-                            <div class="result-details">
-                                <div class="result-detail">
-                                    <span>Total galaxias:</span>
-                                    <span id="total-galaxies">0</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>H₀ promedio:</span>
-                                    <span id="average-hubble">0.00 km/s/Mpc</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Desviación:</span>
-                                    <span id="std-deviation">±0.00 km/s/Mpc</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Máximo:</span>
-                                    <span id="max-hubble">0.00 km/s/Mpc</span>
-                                </div>
-                                <div class="result-detail">
-                                    <span>Mínimo:</span>
-                                    <span id="min-hubble">0.00 km/s/Mpc</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </main>
-
-            <aside class="right-panel">
-                <div class="panel-card">
-                    <h3 class="panel-title">
-                        <span>◍</span> Actividad Reciente
-                    </h3>
-                    <ul class="activity-list">
-                        <li class="activity-item">
-                            <div class="activity-icon">◉</div>
-                            <div class="activity-content">
-                                <div class="activity-title">Cálculo de H₀</div>
-                                <div class="activity-meta">Hace 2 horas</div>
-                            </div>
-                        </li>
-                        <li class="activity-item">
-                            <div class="activity-icon">↭</div>
-                            <div class="activity-content">
-                                <div class="activity-title">Análisis redshift</div>
-                                <div class="activity-meta">Hace 1 día</div>
-                            </div>
-                        </li>
-                        <li class="activity-item">
-                            <div class="activity-icon">▣</div>
-                            <div class="activity-content">
-                                <div class="activity-title">Datos importados</div>
-                                <div class="activity-meta">Hace 2 días</div>
-                            </div>
-                        </li>
-                    </ul>
-                </div>
-
-                <div class="panel-card">
-                    <h3 class="panel-title">
-                        <span>◇</span> Novedades
-                    </h3>
-                    <ul class="activity-list">
-                        <li class="activity-item">
-                            <div class="activity-icon">+</div>
-                            <div class="activity-content">
-                                <div class="activity-title">Exportación PDF</div>
-                                <div class="activity-meta">Disponible</div>
-                            </div>
-                        </li>
-                        <li class="activity-item">
-                            <div class="activity-icon">⚙</div>
-                            <div class="activity-content">
-                                <div class="activity-title">Mantenimiento</div>
-                                <div class="activity-meta">20 Nov 02:00</div>
-                            </div>
-                        </li>
-                    </ul>
-                </div>
-            </aside>
-        </div>
-
-        <script>
-            // Constantes físicas (coinciden con calculos.py)
-            const C_LIGHT = 299792.458;  // km/s
-            const H0_DEFAULT = 70;  // km/s/Mpc
-            const G_CONSTANT = 6.674e-11;  // m^3 kg^-1 s^-2
-
-            // Datos cargados desde Python
-            let galaxyData = {csv_data_json};
-            let analysisResults = {analysis_results_json};
-            let csvDataLoaded = false;  // Control para evitar carga automática
-
-            console.log('🚀 Dashboard cargado');
-            console.log('📊 Datos disponibles:', galaxyData ? galaxyData.length : 0, 'galaxias');
-
-            // Función para cambiar entre pestañas
-            function switchTab(tabName) {{
-                console.log('🔄 Cambiando a pestaña:', tabName);
-                
-                // Ocultar todos los contenidos
-                document.querySelectorAll('.tab-content').forEach(content => {{
-                    content.classList.remove('active');
-                }});
-                
-                // Actualizar tabs
-                document.querySelectorAll('.tab').forEach(tab => {{
-                    tab.classList.remove('active');
-                }});
-                
-                // Actualizar sidebar
-                document.querySelectorAll('.sidebar-item').forEach(item => {{
-                    item.classList.remove('active');
-                }});
-                
-                // Mostrar contenido seleccionado
-                const targetTab = document.getElementById(tabName + '-tab');
-                if (targetTab) {{
-                    targetTab.classList.add('active');
-                }}
-                
-                // Activar tab correspondiente
-                const activeTab = document.querySelector('[data-tab="' + tabName + '"]');
-                if (activeTab) {{
-                    activeTab.classList.add('active');
-                }}
-                
-                // Activar sidebar item
-                const sidebarItems = document.querySelectorAll('.sidebar-item');
-                sidebarItems.forEach(item => {{
-                    const text = item.textContent.toLowerCase().trim();
-                    if (
-                        (tabName === 'hubble' && text.includes('hubble')) ||
-                        (tabName === 'redshift' && text.includes('redshift')) ||
-                        (tabName === 'angular' && text.includes('angular')) ||
-                        (tabName === 'orbits' && text.includes('órbitas')) ||
-                        (tabName === 'csv' && text.includes('csv'))
-                    ) {{
-                        item.classList.add('active');
-                    }}
-                }});
-                
-                // Actualizar título
-                const titleMap = {{
-                    'hubble': 'Cálculo de la Constante de Hubble',
-                    'csv': 'Análisis de Datos CSV',
-                    'redshift': 'Cálculo de Redshift',
-                    'angular': 'Velocidad Angular',
-                    'orbits': 'Parámetros Orbitales'
-                }};
-                
-                const titleElement = document.getElementById('content-main-title');
-                if (titleElement && titleMap[tabName]) {{
-                    titleElement.textContent = titleMap[tabName];
-                }}
-            }}
-
-            // === CÁLCULO DE HUBBLE ===
-            function calculateHubble() {{
-                const velocidad = parseFloat(document.getElementById('velocidad').value) || 0;
-                const distancia = parseFloat(document.getElementById('distancia').value) || 1;
-                
-                if (distancia === 0) {{
-                    alert('⚠️ La distancia no puede ser cero');
-                    return;
-                }}
-                
-                const H0 = velocidad / distancia;
-                
-                document.getElementById('hubble-value').textContent = `H₀ = ${{H0.toFixed(2)}} km/s/Mpc`;
-                document.getElementById('result-velocidad').textContent = `${{velocidad.toLocaleString()}} km/s`;
-                document.getElementById('result-distancia').textContent = `${{distancia}} Mpc`;
-                document.getElementById('calculation-date').textContent = new Date().toLocaleDateString('es-ES');
-                
-                document.getElementById('hubble-result').style.display = 'block';
-                console.log('✅ Hubble calculado:', H0);
-            }}
-
-            // === CÁLCULO DE REDSHIFT ===
-            function calculateRedshift() {{
-                const longObs = parseFloat(document.getElementById('longitud_obs').value) || 0;
-                const longEmit = parseFloat(document.getElementById('longitud_emit').value) || 1;
-                
-                if (longEmit === 0) {{
-                    alert('⚠️ La longitud emitida no puede ser cero');
-                    return;
-                }}
-                
-                const z = (longObs - longEmit) / longEmit;
-                const velocidad = C_LIGHT * z;
-                const distancia = velocidad / H0_DEFAULT;
-                
-                document.getElementById('redshift-value').textContent = `z = ${{z.toFixed(6)}}`;
-                document.getElementById('result-long-obs').textContent = `${{longObs}} nm`;
-                document.getElementById('result-long-emit').textContent = `${{longEmit}} nm`;
-                document.getElementById('result-velocity-z').textContent = `${{velocidad.toFixed(2)}} km/s`;
-                document.getElementById('result-distance-z').textContent = `${{distancia.toFixed(2)}} Mpc`;
-                
-                document.getElementById('redshift-result').style.display = 'block';
-                console.log('✅ Redshift calculado:', z);
-            }}
-
-            // === CÁLCULO DE VELOCIDAD ANGULAR ===
-            function calculateAngular() {{
-                const velLineal = parseFloat(document.getElementById('vel_lineal').value) || 0;
-                const radio = parseFloat(document.getElementById('radio_orbit').value) || 1;
-                
-                if (radio === 0) {{
-                    alert('⚠️ El radio no puede ser cero');
-                    return;
-                }}
-                
-                const omega = (velLineal * 1000) / (radio * 1000);  // rad/s
-                const periodo = (2 * Math.PI) / omega;  // segundos
-                const periodoAnios = periodo / (365.25 * 24 * 3600);  // años
-                
-                document.getElementById('angular-value').textContent = `ω = ${{omega.toExponential(2)}} rad/s`;
-                document.getElementById('result-vel-linear').textContent = `${{velLineal}} km/s`;
-                document.getElementById('result-radio').textContent = `${{radio.toExponential(2)}} km`;
-                document.getElementById('result-period').textContent = `${{(periodoAnios / 1e6).toFixed(0)}} millones de años`;
-                
-                document.getElementById('angular-result').style.display = 'block';
-                console.log('✅ Velocidad angular calculada:', omega);
-            }}
-
-            // === CÁLCULO DE ÓRBITA ===
-            function calculateOrbit() {{
-                const masaCentral = parseFloat(document.getElementById('masa_central').value) || 0;
-                const radioOrbital = parseFloat(document.getElementById('radio_orbital').value) || 1;
-                
-                if (radioOrbital <= 0 || masaCentral <= 0) {{
-                    alert('⚠️ La masa y el radio deben ser positivos');
-                    return;
-                }}
-                
-                // v = sqrt(GM/r)
-                const vOrbital = Math.sqrt(G_CONSTANT * masaCentral / radioOrbital);  // m/s
-                const periodo = (2 * Math.PI * radioOrbital) / vOrbital;  // segundos
-                
-                const vOrbitalKms = vOrbital / 1000;  // km/s
-                const periodoHoras = periodo / 3600;  // horas
-                const altura = (radioOrbital - 6.371e6) / 1000;  // km
-                
-                document.getElementById('orbit-velocity').textContent = `v = ${{vOrbitalKms.toFixed(2)}} km/s`;
-                document.getElementById('result-v-orbit').textContent = `${{vOrbitalKms.toFixed(2)}} km/s`;
-                document.getElementById('result-t-orbit').textContent = `${{periodoHoras.toFixed(2)}} horas`;
-                document.getElementById('result-altitude').textContent = `${{altura.toFixed(0)}} km`;
-                
-                document.getElementById('orbit-result').style.display = 'block';
-                console.log('✅ Órbita calculada - Velocidad:', vOrbitalKms, 'km/s, Período:', periodoHoras, 'horas');
-            }}
-
-            // === CARGAR DATOS CSV ===
-            function loadCSVData() {{
-                console.log('📊 Botón Analizar CSV presionado');
-                
-                if (!galaxyData || galaxyData.length === 0) {{
-                    alert('⚠️ No hay datos disponibles');
-                    return;
-                }}
-                
-                csvDataLoaded = true;
-                
-                // Mostrar contenedores
-                document.getElementById('original-data-container').style.display = 'block';
-                document.getElementById('analysis-results-container').style.display = 'block';
-                document.getElementById('csv-statistics').style.display = 'block';
-                
-                // Llenar tabla de datos originales
-                const originalBody = document.getElementById('original-data-body');
-                originalBody.innerHTML = '';
-                
-                galaxyData.forEach(galaxia => {{
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${{galaxia.galaxia}}</td>
-                        <td>${{galaxia.velocidad}}</td>
-                        <td>${{galaxia.distancia}}</td>
-                        <td>${{galaxia.longitud_obs || 'N/A'}}</td>
-                        <td>${{galaxia.longitud_emit || 'N/A'}}</td>
-                    `;
-                    originalBody.appendChild(row);
-                }});
-                
-                // Mostrar resultados del análisis
-                if (analysisResults && analysisResults.length > 0) {{
-                    displayAnalysisResults();
-                }} else {{
-                    console.log('⚠️ No hay resultados de análisis precalculados');
-                }}
-                
-                console.log('✅ Datos CSV cargados correctamente');
-            }}
-
-            // === MOSTRAR RESULTADOS DEL ANÁLISIS ===
-            function displayAnalysisResults() {{
-                const resultsBody = document.getElementById('analysis-results-body');
-                resultsBody.innerHTML = '';
-                
-                let H0Sum = 0;
-                let H0Values = [];
-                
-                analysisResults.forEach(resultado => {{
-                    const row = document.createElement('tr');
-                    const H0 = resultado.H0_calculado || 0;
-                    
-                    row.innerHTML = `
-                        <td>${{resultado.galaxia}}</td>
-                        <td>${{resultado.velocidad_km_s || resultado.velocidad}}</td>
-                        <td>${{resultado.distancia_Mpc || resultado.distancia}}</td>
-                        <td>${{H0.toFixed(2)}}</td>
-                        <td>${{resultado.redshift ? resultado.redshift.toFixed(6) : 'N/A'}}</td>
-                        <td>${{resultado.distancia_via_redshift ? resultado.distancia_via_redshift.toFixed(2) : 'N/A'}}</td>
-                    `;
-                    resultsBody.appendChild(row);
-                    
-                    H0Sum += H0;
-                    H0Values.push(H0);
-                }});
-                
-                // Calcular estadísticas
-                if (H0Values.length > 0) {{
-                    const promedio = H0Sum / H0Values.length;
-                    const max = Math.max(...H0Values);
-                    const min = Math.min(...H0Values);
-                    
-                    const squaredDiffs = H0Values.map(value => Math.pow(value - promedio, 2));
-                    const avgSquaredDiff = squaredDiffs.reduce((sum, value) => sum + value, 0) / H0Values.length;
-                    const stdDev = Math.sqrt(avgSquaredDiff);
-                    
-                    document.getElementById('total-galaxies').textContent = analysisResults.length;
-                    document.getElementById('average-hubble').textContent = `${{promedio.toFixed(2)}} km/s/Mpc`;
-                    document.getElementById('std-deviation').textContent = `±${{stdDev.toFixed(2)}} km/s/Mpc`;
-                    document.getElementById('max-hubble').textContent = `${{max.toFixed(2)}} km/s/Mpc`;
-                    document.getElementById('min-hubble').textContent = `${{min.toFixed(2)}} km/s/Mpc`;
-                }}
-            }}
-
-            // === FUNCIONES DE DESCARGA ===
-            function downloadOriginalData() {{
-                if (!galaxyData || galaxyData.length === 0) {{
-                    alert('⚠️ No hay datos para descargar');
-                    return;
-                }}
-                const csv = convertToCSV(galaxyData, ['galaxia', 'velocidad', 'distancia', 'longitud_obs', 'longitud_emit']);
-                downloadCSV(csv, 'datos_galaxias_original.csv');
-            }}
-
-            function downloadAnalysisResults() {{
-                if (!analysisResults || analysisResults.length === 0) {{
-                    alert('⚠️ No hay resultados para descargar');
-                    return;
-                }}
-                const csv = convertToCSV(analysisResults, 
-                    ['galaxia', 'velocidad_km_s', 'distancia_Mpc', 'H0_calculado', 'redshift', 'distancia_via_redshift']);
-                downloadCSV(csv, 'resultados_analisis.csv');
-            }}
-
-            function downloadResults() {{
-                const activeTab = document.querySelector('.tab.active');
-                if (activeTab && activeTab.getAttribute('data-tab') === 'csv') {{
-                    downloadAnalysisResults();
-                }} else {{
-                    alert('ℹ️ Cambia a la pestaña de Análisis CSV para descargar resultados');
-                }}
-            }}
-
-            function convertToCSV(data, headers) {{
-                if (!data || data.length === 0) return '';
-                const headerRow = headers.join(',');
-                const dataRows = data.map(row => 
-                    headers.map(header => row[header] !== undefined ? row[header] : '').join(',')
-                );
-                return [headerRow, ...dataRows].join('\\n');
-            }}
-
-            function downloadCSV(csvContent, filename) {{
-                const blob = new Blob([csvContent], {{ type: 'text/csv;charset=utf-8;' }});
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-                console.log('✅ Descargado:', filename);
-            }}
-
-            // === NAVEGACIÓN ===
-            function navigateTo(page) {{
-                console.log('🔄 Navegando a:', page);
-                window.parent.postMessage({{ action: 'navigate', page: page }}, '*');
-            }}
-
-            // === INICIALIZACIÓN ===
-            document.addEventListener('DOMContentLoaded', function() {{
-                console.log('✅ Dashboard inicializado correctamente');
-                console.log('📌 NO se cargan datos CSV automáticamente - esperando clic del usuario');
-            }});
-
-            console.log('🎯 Script cargado - Todas las funciones disponibles');
-
-let selectedSource = 1;
-let loadedData = null;
-let sourceName = null;
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 1: Seleccionar Base de Datos
-// ═══════════════════════════════════════════════════════════
-function selectDatabaseSource(source) {{
-    console.log('🔍 Seleccionando fuente:', source);
+        """, unsafe_allow_html=True)
     
-    // Guardar la selección
-    selectedSource = source;
-    
-    // Mapeo de nombres
-    const sourceNames = {{
-        1: 'Archivos Locales',
-        2: 'SDSS - Galaxias y Espectros',
-        3: 'DESI - Cosmos Profundo',
-        4: 'NASA ESI - Exoplanetas',
-        5: 'NEO - Asteroides y Cometas'
-    }};
-    
-    sourceName = sourceNames[source];
-    
-    // Obtener el formulario de parámetros
-    const paramsForm = document.getElementById('params-form');
-    
-    if (!paramsForm) {{
-        console.error('❌ No se encontró params-form');
-        return;
-    }}
-    
-    // Mostrar/ocultar formulario según la fuente
-    if (source === 2 || source === 3) {{
-        // SDSS o DESI necesitan parámetros
-        paramsForm.classList.add('show');
-        console.log('✅ Mostrando formulario de parámetros');
-    }} else {{
-        // Otras fuentes no necesitan parámetros
-        paramsForm.classList.remove('show');
-        console.log('ℹ️ Ocultando formulario de parámetros');
-    }}
-    
-    // Actualizar indicador visual (opcional)
-    const indicador = document.getElementById('fuente-indicator');
-    if (indicador) {{
-        indicador.innerHTML = '📡 Fuente seleccionada: <strong>' + sourceName + '</strong>';
-    }}
-}}
+    st.info("💡 Utiliza el menú lateral para navegar entre las diferentes secciones del sistema.")
 
-
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 2: Ejecutar Consulta
-// ═══════════════════════════════════════════════════════════
-
-function ejecutarConsulta() {{
-    const loadingStatus = document.getElementById('loading-status');
-    const loadingText = document.getElementById('loading-text');
-    const postLoadMenu = document.getElementById('post-load-menu');
+# === PÁGINA CARGAR DATOS ===
+elif pagina == "📂 Cargar Datos":
+    st.markdown("<h1>📂 Cargar Datos</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: rgba(224, 247, 250, 0.8);'>Selecciona la fuente de datos astronómicos para iniciar el análisis.</p>", unsafe_allow_html=True)
     
-    loadingStatus.classList.remove('hidden');
-    postLoadMenu.classList.add('hidden');
-    
-    const sourceNames = {{
-        1: 'Archivos Locales',
-        2: 'SDSS',
-        3: 'DESI',
-        4: 'NASA ESI',
-        5: 'NEO'
-    }};
-    
-    sourceName = sourceNames[selectedSource];
-    loadingText.textContent = '⏳ Consultando ' + sourceName + '...';
-    
-    const params = {{}};
-    
-    if (selectedSource === 2 || selectedSource === 3) {{
-        params.ra = parseFloat(document.getElementById('param-ra').value);
-        params.dec = parseFloat(document.getElementById('param-dec').value);
-        params.z_min = parseFloat(document.getElementById('param-zmin').value);
-        params.z_max = parseFloat(document.getElementById('param-zmax').value);
-        
-        console.log('📋 Parámetros:', params);
-    }}
-    
-    window.parent.postMessage({{
-        action: 'ejecutar_rutina',
-        source: selectedSource,
-        params: params
-    }}, '*');
-    
-    console.log('📤 Mensaje enviado a Streamlit:', {{
-        action: 'ejecutar_rutina',
-        source: selectedSource,
-        params: params
-    }});
-    
-    setTimeout(() => {{
-        loadingText.textContent = '✅ Datos cargados exitosamente';
-        
-        setTimeout(() => {{
-            loadingStatus.classList.add('hidden');
-            postLoadMenu.classList.remove('hidden');
-            
-            document.getElementById('load-summary').textContent = 
-                'Se cargaron 1,234 registros desde ' + sourceName;
-        }}, 1000);
-    }}, 2000);
-}}
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 3: Abrir Módulo de Cálculos (MEJORADO)
-// ═══════════════════════════════════════════════════════════
-
-function abrirCalculos() {{
-    console.log('🔬 Abriendo módulo de Cálculos...');
-    
-    if (!loadedData || loadedData.length === 0) {{
-        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
-        return;
-    }}
-    
-    // Ocultar menú post-carga
-    document.getElementById('post-load-menu').classList.add('hidden');
-    
-    // Mostrar mensaje de procesamiento
-    const loadingDiv = document.getElementById('loading-status');
-    const loadingText = document.getElementById('loading-text');
-    loadingDiv.classList.remove('hidden');
-    loadingText.textContent = '🔬 Ejecutando cálculos astronómicos...';
-    
-    // Enviar mensaje a Streamlit para ejecutar cálculos
-    window.parent.postMessage({{
-        action: 'ejecutar_calculos',
-        source: sourceName,
-        data: loadedData
-    }}, '*');
-}}
-
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 4: Abrir Módulo de ML (MEJORADO)
-// ═══════════════════════════════════════════════════════════
-
-function abrirML() {{
-    console.log('🤖 Abriendo módulo de Machine Learning...');
-    
-    if (!loadedData || loadedData.length === 0) {{
-        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
-        return;
-    }}
-    
-    // Ocultar menú post-carga
-    document.getElementById('post-load-menu').classList.add('hidden');
-    
-    // Mostrar mensaje de procesamiento
-    const loadingDiv = document.getElementById('loading-status');
-    const loadingText = document.getElementById('loading-text');
-    loadingDiv.classList.remove('hidden');
-    loadingText.textContent = '🤖 Ejecutando análisis de Machine Learning...';
-    
-    // Enviar mensaje a Streamlit
-    window.parent.postMessage({{
-        action: 'ejecutar_ml',
-        source: sourceName,
-        data: loadedData
-    }}, '*');
-}}
-
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 5: Ver Estadísticas (MEJORADO)
-// ═══════════════════════════════════════════════════════════
-
-function verEstadisticas() {{
-    console.log('📈 Mostrando estadísticas...');
-    
-    if (!loadedData || loadedData.length === 0) {{
-        alert('⚠️ No hay datos cargados. Primero consulta una base de datos.');
-        return;
-    }}
-    
-    // Ocultar menú post-carga
-    document.getElementById('post-load-menu').classList.add('hidden');
-    
-    // Mostrar mensaje de procesamiento
-    const loadingDiv = document.getElementById('loading-status');
-    const loadingText = document.getElementById('loading-text');
-    loadingDiv.classList.remove('hidden');
-    loadingText.textContent = '📈 Generando estadísticas...';
-    
-    // Enviar mensaje a Streamlit
-    window.parent.postMessage({{
-        action: 'ver_estadisticas',
-        source: sourceName,
-        data: loadedData
-    }}, '*');
-}}
-
-
-// ═══════════════════════════════════════════════════════════
-// FUNCIÓN 6: Cargar Nuevos Datos
-// ═══════════════════════════════════════════════════════════
-
-function cargarNuevosDatos() {{
-    console.log('🔄 Reiniciando proceso de carga...');
-    
-    document.getElementById('post-load-menu').classList.add('hidden');
-    
-    loadedData = null;
-    sourceName = null;
-    
-    selectDatabaseSource(1);
-}}
-
-
-// ═══════════════════════════════════════════════════════════
-// LISTENER: Escuchar Respuestas desde Streamlit
-// ═══════════════════════════════════════════════════════════
-
-window.addEventListener('message', (event) => {{
-    console.log('📥 Mensaje recibido:', event.data);
-    
-    if (event.data.action === 'datos_cargados') {{
-        loadedData = event.data.data;
-        sourceName = event.data.source;
-        
-        console.log('✅ Datos recibidos desde Streamlit:');
-        console.log('   Fuente:', sourceName);
-        console.log('   Registros:', loadedData ? loadedData.length : 0);
-        
-        const loadingStatus = document.getElementById('loading-status');
-        const loadingText = document.getElementById('loading-text');
-        const postLoadMenu = document.getElementById('post-load-menu');
-        const loadSummary = document.getElementById('load-summary');
-        
-        loadingText.textContent = '✅ Datos cargados exitosamente';
-        
-        setTimeout(() => {{
-            loadingStatus.classList.add('hidden');
-            postLoadMenu.classList.remove('hidden');
-            
-            const numRegistros = loadedData ? loadedData.length : 0;
-            loadSummary.textContent = 
-                'Se cargaron ' + numRegistros.toLocaleString() + ' registros desde ' + sourceName;
-        }}, 1000);
-    }}
-    
-    if (event.data.action === 'error_carga') {{
-        const loadingText = document.getElementById('loading-text');
-        loadingText.textContent = '❌ Error al cargar datos: ' + event.data.error;
-        
-        setTimeout(() => {{
-            document.getElementById('loading-status').classList.add('hidden');
-        }}, 3000);
-    }}
-}});
-
-console.log('🎯 JavaScript del dashboard cargado correctamente');
-</script>
-            
-            
-
-            
-        </script>
-    </body>
-    </html>
-    """
-    
-    return html_content
-
-# ============================================
-# ROUTER DE PÁGINAS
-# ============================================
-
-if st.session_state.current_page == 'orbital':
-    # PÁGINA PRINCIPAL - MENÚ ORBITAL
-    components.html(load_orbital_interface(), height=1080, scrolling=False)
-
-elif st.session_state.current_page == 'analisis':
-    # PÁGINA DE ANÁLISIS/DASHBOARD
-    dashboard_html = load_dashboard_html()
-    
-    # Procesar mensajes del JavaScript
-    try:
-        # Mostrar el dashboard
-        components.html(dashboard_html, height=1080, scrolling=False)
-        
-    except Exception as e:
-        st.error(f"Error procesando mensajes: {e}")
-    
-    # Procesar consultas pendientes
-    if st.session_state.pending_query is not None:
-        with st.spinner('🔄 Consultando base de datos...'):
-            datos, fuente = ejecutar_rutina_database(
-                st.session_state.pending_query['source'],
-                st.session_state.pending_query.get('params')
-            )
-            
-            if datos is not None:
-                st.session_state.data_frame = datos
-                st.session_state.fuente_actual = fuente
-                st.success(f'✅ Cargados {len(datos)} registros desde {fuente}')
-                
-                # Mostrar vista previa de datos
-                with st.expander("📊 Vista previa de datos cargados"):
-                    st.dataframe(datos.head(10))
-                    st.write(f"**Forma del dataset:** {datos.shape}")
-                    st.write(f"**Columnas:** {list(datos.columns)}")
-            else:
-                st.error('❌ No se pudieron cargar los datos')
-            
-            st.session_state.pending_query = None
-
-# En la sección elif st.session_state.current_page == 'analisis':
-
-# Agregar después de cargar el dashboard
-st.markdown("""
-<script>
-window.addEventListener('message', (event) => {
-    if (event.data.action === 'ejecutar_rutina') {
-        // Enviar datos a Streamlit
-        const params = event.data.params;
-        const source = event.data.source;
-        
-        // Aquí Streamlit ejecutaría rutinas.py y devolvería los datos
-        window.parent.postMessage({
-            action: 'consulta_iniciada',
-            source: source
-        }, '*');
+    fuentes_opciones = {
+        1: "📁 Archivos Locales (CSV/DAT)",
+        2: "🌀 SDSS - Galaxias y espectros",
+        3: "🔭 DESI - Objetos del cosmos profundo",
+        4: "🪐 NASA ESI - Exoplanetas",
+        5: "☄️ NEO - Asteroides y Cometas"
     }
-});
-</script>
-""", unsafe_allow_html=True)
+    
+    opcion_seleccionada = st.selectbox(
+        "Selecciona la fuente de datos:",
+        options=list(fuentes_opciones.keys()),
+        format_func=lambda x: fuentes_opciones[x],
+        key="selector_fuente"
+    )
+    
+    st.markdown(f"""
+        <div style="background: rgba(0, 229, 255, 0.1); border-left: 4px solid #00e5ff; 
+                    padding: 1rem; border-radius: 0 8px 8px 0; margin: 1rem 0;">
+            <strong style="color: #00e5ff;">Fuente seleccionada:</strong> 
+            <span style="color: #e0f7fa;">{fuentes_opciones[opcion_seleccionada].split(' - ')[0]}</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Archivos Locales
+    if opcion_seleccionada == 1:
+        st.markdown("### 📁 Subir Archivo Local")
+        uploaded_file = st.file_uploader("Arrastra o selecciona un archivo CSV o DAT", type=["csv", "dat"])
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                st.session_state.datos_actuales = df
+                st.session_state.fuente_actual = f"Local: {uploaded_file.name}"
+                st.success(f"✅ Archivo {uploaded_file.name} cargado correctamente.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error al leer el archivo: {e}")
 
-# Procesar consultas si hay una pendiente
-if 'pending_query' in st.session_state and st.session_state.pending_query:
-    with st.spinner('Consultando base de datos...'):
-        datos, fuente = ejecutar_rutina_database(
-            st.session_state.pending_query['source'],
-            st.session_state.pending_query.get('params')
+    # SDSS / DESI
+    elif opcion_seleccionada in [2, 3]:
+        nombre_corto = "SDSS" if opcion_seleccionada == 2 else "DESI"
+        st.markdown(f"### 🌐 Consulta Remota: {nombre_corto}")
+        
+        col_ra, col_dec = st.columns(2)
+        with col_ra:
+            ra = st.number_input("Ascensión Recta (RA, grados)", value=180.0, key="ra")
+        with col_dec:
+            dec = st.number_input("Declinación (DEC, grados)", value=0.0, key="dec")
+
+        col_zmin, col_zmax, col_rad = st.columns(3)
+        with col_zmin:
+            z_min = st.number_input("Redshift Mínimo", value=0.05, key="z_min")
+        with col_zmax:
+            z_max = st.number_input("Redshift Máximo", value=0.3, key="z_max")
+        with col_rad:
+            radius = st.number_input("Radio de Búsqueda (°)", value=1.0, key="radius")
+
+        if st.button(f"🔍 Consultar {nombre_corto}", key="btn_sdss_desi", use_container_width=True):
+            with st.spinner(f"Contactando a {nombre_corto}..."):
+                try:
+                    if st.session_state.rutina_instance:
+                        resultado = st.session_state.rutina_instance.base_datos.conectar(
+                            ra=ra, dec=dec, z_min=z_min, z_max=z_max, radius=radius, source=nombre_corto
+                        )
+                        if resultado is not None:
+                            df = resultado.to_pandas() if hasattr(resultado, 'to_pandas') else resultado
+                            st.session_state.datos_actuales = df
+                            st.session_state.fuente_actual = nombre_corto
+                            st.session_state.metadatos['consulta'] = {'ra': ra, 'dec': dec, 'z_min': z_min, 'z_max': z_max, 'radius': radius}
+                            st.session_state.rutina_instance.base_datos.guardardatos(resultado, nombre_corto)
+                            st.success(f"✅ ¡Éxito! Se cargaron {len(df)} registros de {nombre_corto}.")
+                            st.rerun()
+                        else:
+                            st.error("❌ No se obtuvieron resultados o la consulta falló.")
+                    else:
+                        st.error("❌ Error: Instancia de Rutina no inicializada.")
+                except Exception as e:
+                    st.error(f"❌ Error al consultar {nombre_corto}: {e}")
+
+    # NASA ESI
+    elif opcion_seleccionada == 4:
+        st.markdown("### 🪐 NASA ESI - Exoplanetas")
+        st.markdown("Consulta la base de datos de exoplanetas de la NASA (datos recientes con radio conocido).")
+        
+        if st.button("🔍 Consultar NASA ESI", key="btn_nasa_esi", use_container_width=True):
+            with st.spinner("Contactando a NASA Exoplanet Archive..."):
+                try:
+                    if st.session_state.rutina_instance:
+                        resultado = st.session_state.rutina_instance.base_datos.conectar(source="NASA ESI")
+                        if resultado is not None:
+                            df = resultado.to_pandas() if hasattr(resultado, 'to_pandas') else resultado
+                            st.session_state.datos_actuales = df
+                            st.session_state.fuente_actual = "NASA ESI"
+                            st.success(f"✅ ¡Éxito! Se cargaron {len(df)} exoplanetas.")
+                            st.rerun()
+                        else:
+                            st.error("❌ No se obtuvieron resultados.")
+                    else:
+                         st.error("❌ Error: Instancia de Rutina no inicializada.")
+                except Exception as e:
+                    st.error(f"❌ Error al consultar NASA ESI: {e}")
+
+    # NEO
+    elif opcion_seleccionada == 5:
+        st.markdown("### ☄️ NEO - Near-Earth Objects")
+        
+        opciones_neo = [
+            "Ceres", "Pallas", "Vesta", "Eros", "Apollo",
+            "Toutatis", "Phaethon", "Geographos", "Itokawa",
+            "Bennu", "Apophis", "Ryugu", "Mathilde",
+            "Didymos", "2013 VY4"
+        ]
+        
+        seleccion_neo = st.selectbox("Selecciona el objeto a consultar:", opciones_neo, key="selector_neo")
+        
+        if st.button("🔍 Consultar JPL Horizons", key="btn_neo", use_container_width=True):
+            with st.spinner(f"Conectando con JPL (NASA) para buscar {seleccion_neo}..."):
+                try:
+                    if st.session_state.rutina_instance:
+                        resultado = st.session_state.rutina_instance.base_datos.conectar(source="NEO", object_name=seleccion_neo)
+                        if resultado is not None:
+                            df = resultado.to_pandas() if hasattr(resultado, 'to_pandas') else resultado
+                            st.session_state.datos_actuales = df
+                            st.session_state.fuente_actual = f"NEO - {seleccion_neo}"
+                            st.success(f"✅ Datos orbitales de {seleccion_neo} descargados correctamente.")
+                            st.rerun()
+                        else:
+                            st.error("❌ No se obtuvieron resultados.")
+                    else:
+                        st.error("❌ Error: Instancia de Rutina no inicializada.")
+                except Exception as e:
+                    st.error(f"❌ Error en la consulta: {str(e)}")
+
+# === PÁGINA DE CÁLCULOS ===
+elif pagina == "🔭 Cálculos":
+    if st.session_state.datos_actuales is None:
+        st.warning("⚠️ No hay datos cargados. Por favor, carga datos primero desde la sección 'Cargar Datos'.")
+    elif not is_calculos_ok or not Calculos_cls:
+        st.error(f"❌ Error importando Calculos: {err_calculos}")
+    else:
+        df = st.session_state.datos_actuales.copy()
+        source = st.session_state.fuente_actual
+        calc_instance = Calculos_cls()
+        
+        st.markdown(f"<h1>🔭 Laboratorio de Análisis</h1>", unsafe_allow_html=True)
+        st.markdown(f"""
+            <div style="background: rgba(0, 229, 255, 0.1); border-left: 4px solid #00e5ff; 
+                        padding: 1rem; border-radius: 0 8px 8px 0; margin-bottom: 1.5rem;">
+                <strong style="color: #00e5ff;">Fuente activa:</strong> 
+                <span style="color: #e0f7fa;">{source}</span>
+                <span style="margin-left: 1rem; color: rgba(224, 247, 250, 0.7);">({len(df):,} registros)</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # SDSS (Cosmología)
+        if source and "SDSS" in source:
+            tab1, tab2, tab3 = st.tabs(["📊 Estadísticas", "🌌 Mapa 3D", "📈 Cálculos"])
+            
+            with tab1:
+                st.markdown("### Distribución de Redshift (z)")
+                if 'z' in df.columns:
+                    fig_hist = px.histogram(df, x="z", nbins=50, title="Histograma de Redshift",
+                                          color_discrete_sequence=['#00e5ff'])
+                    fig_hist.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='#e0f7fa')
+                    )
+                    st.plotly_chart(fig_hist, use_container_width=True)
+                    z_peak = df['z'].mode()[0] if not df['z'].mode().empty else 0
+                    st.info(f"💡 El pico de detección está en z ≈ {z_peak:.3f}. Esto podría indicar un cúmulo de galaxias.")
+
+            with tab2:
+                st.markdown("### 🗺️ La Telaraña Cósmica (3D)")
+                if st.button("🚀 Generar Mapa 3D", key="btn_mapa_3d", use_container_width=True):
+                    with st.spinner("Triangulando posiciones en el universo..."):
+                        df_3d = calc_instance.generar_coordenadas_cartesianas(df)
+                        if df_3d is not None:
+                            fig_3d = px.scatter_3d(df_3d, x='x_coord', y='y_coord', z='z_coord',
+                                                 color='z', opacity=0.7,
+                                                 title="Mapa 3D del Universo Observable (Mpc)",
+                                                 color_continuous_scale='Viridis')
+                            fig_3d.update_traces(marker=dict(size=3))
+                            fig_3d.update_layout(template="plotly_dark", scene=dict(aspectmode='data'),
+                                               paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                            st.plotly_chart(fig_3d, use_container_width=True)
+                            st.success("✅ Mapa generado. Usa el mouse para rotar y hacer zoom.")
+                        else:
+                            st.error("Faltan columnas RA/DEC/Z para generar el mapa.")
+
+            with tab3:
+                st.markdown("### Aplicar Cálculos Numéricos")
+                if st.button("📐 Calcular Distancias Hubble", use_container_width=True):
+                    new_df, report = calc_instance.aplicar_cosmologia(df)
+                    st.session_state.datos_actuales = new_df
+                    st.session_state.metadatos['ultimo_reporte'] = report
+                    st.success("✅ Cálculos aplicados correctamente.")
+                    st.dataframe(new_df[['z', 'Distancia_Hubble_Mpc', 'Velocidad_Recesion_km_s']].head(10))
+
+        # DESI (Fotometría Deep Sky)
+        elif source and "DESI" in source:
+            st.info(f"🔭 Analizando fotometría de {len(df)} objetos profundos.")
+            
+            if 'mag_g' not in df.columns:
+                df, _ = calc_instance.aplicar_fotometria_desi(df)
+                st.session_state.datos_actuales = df
+
+            tab1, tab2, tab3 = st.tabs(["🎨 Diagrama Color-Color", "🌌 Mapa del Cielo", "📊 Clasificación"])
+            
+            with tab1:
+                st.markdown("### Diagrama de Diagnóstico Astronómico")
+                st.markdown("""
+                El cruce de colores nos dice qué tipo de objetos estamos observando:
+                - **Arriba/Izquierda:** Galaxias Rojas (Elípticas / Viejas)
+                - **Abajo/Derecha:** Galaxias Azules (Espirales / Jóvenes)
+                - **Puntos aislados:** Posibles Quásares o Estrellas
+                """)
+                
+                if 'color_g_r' in df.columns and 'color_r_z' in df.columns:
+                    color_col = 'type' if 'type' in df.columns else 'color_g_r'
+                    
+                    fig_color = px.scatter(df, x="color_g_r", y="color_r_z",
+                                         color=color_col, opacity=0.6,
+                                         hover_data=['ra', 'dec', 'mag_g'],
+                                         labels={'color_g_r': 'Color g - r (Verde - Rojo)', 
+                                                 'color_r_z': 'Color r - z (Rojo - Infrarrojo)'},
+                                         title="Diagrama Color-Color (g-r vs r-z)")
+                    fig_color.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_color, use_container_width=True)
+                else:
+                    st.warning("Faltan datos de flujo (g, r, z) para calcular colores.")
+
+            with tab2:
+                st.markdown("### Distribución Espacial en el Cielo")
+                st.markdown("Densidad de objetos en las coordenadas observadas.")
+                
+                if 'ra' in df.columns and 'dec' in df.columns:
+                    fig_sky = px.density_heatmap(df, x="ra", y="dec",
+                                               nbinsx=30, nbinsy=30,
+                                               labels={'ra': 'Ascensión Recta (RA)', 'dec': 'Declinación (DEC)'},
+                                               title="Densidad de Objetos DESI",
+                                               color_continuous_scale='Viridis')
+                    fig_sky.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_sky, use_container_width=True)
+
+            with tab3:
+                st.markdown("### Tipos Morfológicos")
+                if 'type' in df.columns:
+                    conteo = df['type'].value_counts()
+                    fig_bar = px.bar(x=conteo.index, y=conteo.values,
+                                   labels={'x': 'Tipo Objeto', 'y': 'Cantidad'},
+                                   title="Clasificación Morfológica (Tractor Type)",
+                                   color=conteo.values, color_continuous_scale='Bluered_r')
+                    fig_bar.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                    st.info("""
+                    **Tipos de objetos:**
+                    - **PSF:** Puntos de luz (probablemente Estrellas o Quásares lejanos)
+                    - **REX/EXP/DEV:** Objetos extendidos (Galaxias redondas, discos o irregulares)
+                    """)
+                else:
+                    st.warning("No se encontró la columna 'type'.")
+
+            if st.button("📄 Generar Reporte Fotométrico", use_container_width=True):
+                _, report = calc_instance.aplicar_fotometria_desi(df)
+                st.session_state.metadatos['ultimo_reporte'] = report
+                st.success("✅ Reporte generado. Ve a la pestaña 'Reporte' para verlo.")
+                st.code(report)
+
+        # NEO
+        elif source and "NEO" in source:
+            tab1, tab2 = st.tabs(["🛸 Simulador Orbital", "📋 Parámetros"])
+            
+            with tab1:
+                st.markdown("### Simulación Orbital Futura")
+                col_sim1, col_sim2 = st.columns([1, 2])
+                with col_sim1:
+                    dias_futuro = st.number_input("Días a simular:", min_value=1, max_value=36500, value=365, step=30)
+                    run_sim = st.button("🚀 Simular Trayectoria", use_container_width=True)
+                
+                with col_sim2:
+                    if run_sim:
+                        datos_sim = calc_instance.simular_orbita_futura(df, dias=dias_futuro)
+                        if "error" not in datos_sim:
+                            fig_orb = go.Figure()
+                            fig_orb.add_trace(go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', 
+                                             marker=dict(size=10, color='yellow'), name='Sol'))
+                            fig_orb.add_trace(go.Scatter3d(x=datos_sim['trayectoria_x'], y=datos_sim['trayectoria_y'], 
+                                             z=datos_sim['trayectoria_z'], mode='lines', 
+                                             line=dict(color='#00e5ff', width=2), name='Órbita'))
+                            fig_orb.add_trace(go.Scatter3d(x=[datos_sim['futuro_x']], y=[datos_sim['futuro_y']], 
+                                             z=[datos_sim['futuro_z']], mode='markers+text', 
+                                             marker=dict(size=6, color='#ff4444'), 
+                                             text=[f"{datos_sim['objeto']} (+{dias_futuro}d)"], 
+                                             textposition="top center", name='Futuro'))
+                            fig_orb.update_layout(title=f"Simulación de {datos_sim['objeto']}",
+                                                scene=dict(aspectmode='data', xaxis_title='X (AU)', 
+                                                          yaxis_title='Y (AU)', zaxis_title='Z (AU)'),
+                                                template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)',
+                                                margin=dict(l=0, r=0, b=0, t=40))
+                            st.plotly_chart(fig_orb, use_container_width=True)
+                            st.info(f"📍 Coordenadas predichas (AU): X={datos_sim['futuro_x']:.3f}, Y={datos_sim['futuro_y']:.3f}, Z={datos_sim['futuro_z']:.3f}")
+                        else:
+                            st.error(f"No se pudo simular: {datos_sim['error']}")
+            
+            with tab2:
+                st.markdown("### Datos Orbitales Cargados")
+                st.dataframe(df, use_container_width=True)
+                if st.button("📐 Calcular Velocidades Medias", use_container_width=True):
+                    new_df, report = calc_instance.aplicar_orbitales(df)
+                    st.session_state.datos_actuales = new_df
+                    st.session_state.metadatos['ultimo_reporte'] = report
+                    st.success("✅ Cálculos aplicados.")
+                    st.rerun()
+
+        # NASA ESI - Exoplanetas
+        elif source and "NASA ESI" in source:
+            if 'Clase_Planeta' not in df.columns:
+                df, _ = calc_instance.aplicar_exoplanetas(df)
+                st.session_state.datos_actuales = df
+
+            st.info(f"🪐 Analizando {len(df)} exoplanetas confirmados.")
+            tab1, tab2, tab3 = st.tabs(["🔵 Masa vs Radio", "☀️ Zona Habitable", "📅 Descubrimientos"])
+            
+            with tab1:
+                st.markdown("### Clasificación por Composición")
+                if 'pl_bmasse' in df.columns and 'pl_rade' in df.columns:
+                    fig_comp = px.scatter(df, x="pl_bmasse", y="pl_rade", color="Clase_Planeta",
+                                        hover_data=['pl_name', 'pl_orbper'], log_x=True, log_y=True,
+                                        labels={'pl_bmasse': 'Masa (Masas Terrestres)', 'pl_rade': 'Radio (Radios Terrestres)'},
+                                        title="Relación Masa-Radio de Exoplanetas")
+                    fig_comp.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_comp, use_container_width=True)
+
+            with tab2:
+                st.markdown("### La Zona de 'Ricitos de Oro'")
+                if 'distancia_estimada_AU' in df.columns and 'st_teff' in df.columns:
+                    df_viz = df[df['distancia_estimada_AU'] < 5].copy()
+                    fig_hab = px.scatter(df_viz, x="distancia_estimada_AU", y="st_teff", color="Zona_Termica",
+                                       size="pl_rade", hover_data=['pl_name'],
+                                       color_discrete_map={'Zona Habitable (Ricitos de Oro)': '#00ff00', 
+                                                          'Zona Caliente': '#ff4444', 'Zona Fría': '#4444ff'},
+                                       labels={'distancia_estimada_AU': 'Distancia a la Estrella (AU)', 
+                                              'st_teff': 'Temperatura Estrella (K)'},
+                                       title="Zona de Habitabilidad vs Temperatura Estelar")
+                    fig_hab.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_hab, use_container_width=True)
+
+            with tab3:
+                st.markdown("### Ritmo de Descubrimientos")
+                conteo_anual = df['disc_year'].value_counts().sort_index()
+                fig_hist = px.bar(x=conteo_anual.index, y=conteo_anual.values,
+                                labels={'x': 'Año', 'y': 'Descubrimientos'},
+                                title="Descubrimiento de Exoplanetas por Año")
+                fig_hist.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                fig_hist.update_traces(marker_color='#00e5ff')
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+            if st.button("📄 Generar Reporte Científico", use_container_width=True):
+                _, report = calc_instance.aplicar_exoplanetas(df)
+                st.session_state.metadatos['ultimo_reporte'] = report
+                st.success("✅ Reporte generado. Ve a la pestaña 'Reporte' para verlo.")
+                st.code(report)
+
+        # Genérico
+        else:
+            st.markdown("### Análisis Estadístico General")
+            st.dataframe(df.describe(), use_container_width=True)
+
+# === PÁGINA CALCULADORAS (NUEVA SECCIÓN) ===
+elif pagina == "🧮 Calculadoras":
+    st.markdown("<h1>🧮 Calculadoras Astrofísicas</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color: rgba(224, 247, 250, 0.8);'>Herramientas rápidas para cálculos fundamentales.</p>", unsafe_allow_html=True)
+    
+    calc_instance = Calculos_cls() if Calculos_cls else None
+    if not calc_instance:
+        st.error("No se pudo cargar el módulo de cálculos.")
+    else:
+        tab1, tab2, tab3, tab4 = st.tabs(["🌌 Hubble", "🔴 Redshift", "🔄 V. Angular", "💫 Orbital"])
+
+        # 1. Calculadora Hubble
+        with tab1:
+            st.markdown("### Constante de Hubble ($H_0$)")
+            st.write("Calcula la tasa de expansión del universo basada en velocidad y distancia.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                v_rec = st.number_input("Velocidad de Recesión (km/s)", value=7000.0, step=100.0)
+            with col2:
+                d_mpc = st.number_input("Distancia (Mpc)", value=100.0, step=10.0)
+            
+            if st.button("Calcular H0", key="btn_h0"):
+                h0_val = calc_instance.calc_basic_hubble(v_rec, d_mpc)
+                st.success(f"✅ Constante de Hubble calculada: **{h0_val:.2f} km/s/Mpc**")
+                
+                st.markdown("""
+                <div style="background: rgba(0, 229, 255, 0.05); padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+                    <small>📝 Nota: El valor aceptado actualmente varía entre 67 y 74 km/s/Mpc.</small>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Dato interesante sobre distancias
+                if d_mpc > 0:
+                    dist_ly = d_mpc * 3.262e6
+                    st.info(f"ℹ️ {d_mpc} Mpc equivalen a aproximadamente **{dist_ly:,.0f} años luz**.")
+
+        # 2. Calculadora Redshift
+        with tab2:
+            st.markdown("### Desplazamiento al Rojo ($z$)")
+            st.write("Determina el desplazamiento espectral comparando longitudes de onda.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                l_obs = st.number_input("Longitud de onda observada (nm)", value=658.0, step=0.1)
+            with col2:
+                l_emit = st.number_input("Longitud de onda emitida (nm)", value=656.3, step=0.1, help="Ej: H-alpha es 656.3 nm")
+            
+            if st.button("Calcular Redshift", key="btn_z"):
+                z_val = calc_instance.calc_basic_redshift(l_obs, l_emit)
+                st.success(f"✅ Redshift (z): **{z_val:.5f}**")
+                
+                if z_val > 0:
+                    st.write("🔴 El objeto se aleja (Redshift).")
+                elif z_val < 0:
+                    st.write("🔵 El objeto se acerca (Blueshift).")
+
+        # 3. Calculadora Velocidad Angular
+        with tab3:
+            st.markdown("### Velocidad Angular ($\omega$)")
+            st.write("Relación entre velocidad lineal y radio.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                v_lin = st.number_input("Velocidad lineal (km/s)", value=30.0)
+            with col2:
+                r_km = st.number_input("Radio de órbita (km)", value=150000000.0)
+            
+            if st.button("Calcular Omega", key="btn_w"):
+                w_val = calc_instance.calc_basic_angular_vel(v_lin, r_km)
+                st.success(f"✅ Velocidad Angular: **{w_val:.2e} rad/s**")
+
+        # 4. Calculadora Orbital
+        with tab4:
+            st.markdown("### Velocidad Orbital ($v$)")
+            st.write("Velocidad necesaria para mantener una órbita circular estable.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                m_central = st.number_input("Masa central (kg)", value=1.989e30, format="%.2e")
+            with col2:
+                r_orbita_m = st.number_input("Radio de órbita (m)", value=1.496e11, format="%.2e")
+            
+            if st.button("Calcular Velocidad Orbital", key="btn_orb"):
+                v_orb = calc_instance.calc_basic_orbital(m_central, r_orbita_m)
+                st.success(f"✅ Velocidad Orbital: **{v_orb/1000:.2f} km/s**")
+                st.info("Usando G = 6.67430e-11")
+
+# === PÁGINA MACHINE LEARNING (MODIFICADA) ===
+elif pagina == "🤖 Machine Learning":
+    if st.session_state.datos_actuales is None:
+        st.warning("⚠️ No hay datos cargados. Por favor, carga datos primero.")
+    else:
+        df = st.session_state.datos_actuales.copy()
+        cols = df.columns.tolist()
+        
+        st.markdown("<h1>🤖 Laboratorio de Inteligencia Artificial</h1>", unsafe_allow_html=True)
+        st.markdown("<p style='color: rgba(224, 247, 250, 0.8);'>Modelos predictivos y de agrupamiento avanzados.</p>", unsafe_allow_html=True)
+
+        # --- DETECTOR DE CONTEXTO ---
+        # Sugiere el tipo de proyecto basado en las columnas disponibles
+        project_type = "Generico"
+        
+        # Caso 1: NEO (Asteroides) - Detecta elementos orbitales
+        if {'a', 'e', 'i'}.issubset(cols) or {'a', 'e', 'incl'}.issubset(cols):
+            project_type = "NEO_Clustering"
+            st.success("🚀 Contexto Detectado: Dinámica Orbital de Asteroides")
+        
+        # Caso 2: NASA Exoplanetas - Detecta radio/periodo
+        elif {'pl_rade', 'pl_orbper'}.issubset(cols):
+            project_type = "Exo_Regression"
+            st.success("🪐 Contexto Detectado: Astrofísica de Exoplanetas")
+            
+        # Caso 3: SDSS - Detecta magnitudes y redshift
+        elif {'u', 'g', 'r', 'i', 'z'}.issubset(cols) and ('class' in cols or 'z' in cols):
+             project_type = "SDSS_PhotoZ"
+             st.success("🌌 Contexto Detectado: Cosmología SDSS (Redshift Fotométrico)")
+
+        # Caso 4: DESI/SDSS Generico - Detecta flujos o magnitudes
+        elif any(x in cols for x in ['flux_g', 'mag_g', 'flux_r']):
+            project_type = "DeepSpace_Clustering"
+            st.success("🔭 Contexto Detectado: Fotometría de Espacio Profundo")
+
+        # --- INTERFACES DE PROYECTO ---
+        
+        # === PROYECTO A: CLUSTERING DE FAMILIAS DE ASTEROIDES ===
+        if project_type == "NEO_Clustering":
+            st.markdown("""
+            ### ☄️ Proyecto A: Detección de Familias de Asteroides
+            **Objetivo:** Utilizar algoritmos no supervisados (K-Means) para encontrar grupos de asteroides que comparten origen (familias colisionales).
+            """)
+            
+            col_params, col_viz = st.columns([1, 2])
+            
+            with col_params:
+                st.markdown("#### Configuración del Modelo")
+                n_clusters = st.slider("Número de Familias (k)", 2, 10, 3)
+                
+                # Selección de features (intenta auto-detectar)
+                c_a = 'a' if 'a' in cols else cols[0]
+                c_e = 'e' if 'e' in cols else cols[1]
+                c_i = 'i' if 'i' in cols else ('incl' if 'incl' in cols else cols[2])
+                
+                features = st.multiselect("Variables de Agrupamiento", cols, default=[c_a, c_e, c_i])
+                
+                if st.button("🚀 Ejecutar Clustering", use_container_width=True):
+                    if len(features) >= 2:
+                        # Preprocesamiento
+                        X = df[features].dropna()
+                        scaler = StandardScaler()
+                        X_scaled = scaler.fit_transform(X)
+                        
+                        # Modelo
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                        labels = kmeans.fit_predict(X_scaled)
+                        
+                        # Guardar resultado temporal
+                        df_res = df.loc[X.index].copy()
+                        df_res['Cluster'] = labels.astype(str)
+                        st.session_state.ml_result = df_res
+                        st.success(f"✅ Se encontraron {n_clusters} familias potenciales.")
+                    else:
+                        st.error("Selecciona al menos 2 variables.")
+
+            with col_viz:
+                if 'ml_result' in st.session_state and project_type == "NEO_Clustering":
+                    res = st.session_state.ml_result
+                    st.markdown("#### 🌌 Visualización 3D de Familias")
+                    
+                    # Gráfico 3D
+                    fig_3d = px.scatter_3d(res, x=c_a, y=c_e, z=c_i,
+                                         color='Cluster', opacity=0.7,
+                                         title="Familias de Asteroides Detectadas",
+                                         labels={c_a: 'Semieje Mayor (a)', c_e: 'Excentricidad (e)', c_i: 'Inclinación (i)'})
+                    fig_3d.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_3d, use_container_width=True)
+
+        # === PROYECTO F: PREDICCIÓN DE MASA (RED NEURONAL) ===
+        elif project_type == "Exo_Regression":
+            st.markdown("""
+            ### ⚖️ Proyecto F: Predicción de Masa Planetaria (Deep Learning)
+            **Objetivo:** Entrenar una Red Neuronal para predecir la masa de un exoplaneta basándose en su radio y periodo.
+            """)
+            
+            col_input, col_train = st.columns(2)
+            
+            with col_input:
+                st.markdown("#### Variables de Entrada (X)")
+                default_x = [c for c in ['pl_rade', 'pl_orbper', 'st_teff'] if c in cols]
+                features_x = st.multiselect("Selecciona Features", cols, default=default_x)
+                
+                st.markdown("#### Objetivo (Y)")
+                target_y = st.selectbox("Variable a Predecir", cols, index=cols.index('pl_bmasse') if 'pl_bmasse' in cols else 0)
+                
+            with col_train:
+                st.markdown("#### Hiperparámetros de la Red")
+                hidden_layers = st.slider("Complejidad (Neuronas Ocultas)", 10, 100, 50)
+                epochs = st.slider("Iteraciones (Epochs)", 100, 1000, 500)
+                
+                if st.button("🧠 Entrenar Red Neuronal", use_container_width=True):
+                    if features_x and target_y:
+                        # Preparación de datos
+                        data_ml = df[features_x + [target_y]].dropna()
+                        X = data_ml[features_x]
+                        y = data_ml[target_y]
+                        
+                        # Guardar nombres para uso posterior
+                        nombres_planetas = df.loc[data_ml.index, 'pl_name'] if 'pl_name' in df.columns else data_ml.index
+
+                        X_train, X_test, y_train, y_test, name_train, name_test = train_test_split(X, y, nombres_planetas, test_size=0.2, random_state=42)
+                        
+                        # Escalamiento (Vital para Redes Neuronales)
+                        scaler_x = StandardScaler()
+                        scaler_y = StandardScaler()
+                        
+                        X_train_sc = scaler_x.fit_transform(X_train)
+                        X_test_sc = scaler_x.transform(X_test)
+                        y_train_sc = scaler_y.fit_transform(y_train.values.reshape(-1, 1)).ravel()
+                        y_test_sc = scaler_y.transform(y_test.values.reshape(-1, 1)).ravel()
+                        
+                        # Modelo
+                        model = MLPRegressor(hidden_layer_sizes=(hidden_layers, hidden_layers//2),
+                                           max_iter=epochs, random_state=42, learning_rate_init=0.001)
+                        
+                        with st.spinner("Entrenando red neuronal..."):
+                            model.fit(X_train_sc, y_train_sc)
+                            
+                        # Predicciones
+                        y_pred_sc = model.predict(X_test_sc)
+                        y_pred = scaler_y.inverse_transform(y_pred_sc.reshape(-1, 1)).ravel()
+                        
+                        # Métricas
+                        r2 = r2_score(y_test, y_pred)
+                        
+                        # Guardar TODO en session_state para la parte interactiva
+                        st.session_state.ml_exo_res = {
+                            'y_test': y_test, 'y_pred': y_pred, 'r2': r2, 'model': model,
+                            'names': name_test, 'scaler_y': scaler_y, 'inputs': features_x, 'target': target_y
+                        }
+                        st.success(f"✅ Entrenamiento finalizado. R² Score: {r2:.4f}")
+                    else:
+                        st.error("Faltan variables.")
+
+            # Visualización de Resultados
+            if 'ml_exo_res' in st.session_state and project_type == "Exo_Regression":
+                res = st.session_state.ml_exo_res
+                
+                st.markdown("---")
+                col_res_viz, col_res_ind = st.columns(2)
+                
+                with col_res_viz:
+                    st.markdown("#### 📉 Evaluación Global")
+                    fig_reg = px.scatter(x=res['y_test'], y=res['y_pred'], 
+                                       hover_name=res['names'],
+                                       labels={'x': 'Masa Real', 'y': 'Masa Predicha por IA'},
+                                       title=f"Predicción vs Realidad (Ajuste: {res['r2']:.2f})")
+                    min_val = min(res['y_test'].min(), res['y_pred'].min())
+                    max_val = max(res['y_test'].max(), res['y_pred'].max())
+                    fig_reg.add_shape(type="line", x0=min_val, y0=min_val, x1=max_val, y1=max_val,
+                                    line=dict(color="red", dash="dash"))
+                    fig_reg.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_reg, use_container_width=True)
+
+                # --- NUEVA SECCIÓN: PREDICCIÓN INDIVIDUAL ---
+                with col_res_ind:
+                    st.markdown("#### 🔮 Oráculo Planetario")
+                    st.write("Selecciona un planeta del set de prueba para ver qué tan cerca estuvo la IA.")
+                    
+                    # Crear diccionario para el selectbox
+                    test_indices = res['y_test'].index
+                    test_names = res['names']
+                    opciones = {i: f"{name} (ID: {i})" for i, name in zip(test_indices, test_names)}
+                    
+                    seleccion_id = st.selectbox("Selecciona Planeta:", list(opciones.keys()), format_func=lambda x: opciones[x])
+                    
+                    if seleccion_id:
+                        # Encontrar los valores reales y predichos
+                        # Nota: y_test es una Serie, podemos acceder por índice
+                        real = res['y_test'].loc[seleccion_id]
+                        
+                        # Para encontrar el predicho, necesitamos saber la posición en el array numpy
+                        # Esto es un poco truculento porque y_pred es un array sin índices
+                        pos_array = list(test_indices).index(seleccion_id)
+                        pred = res['y_pred'][pos_array]
+                        
+                        error = abs(real - pred)
+                        error_pct = (error / real) * 100 if real != 0 else 0
+                        
+                        st.metric(label="Masa Real", value=f"{real:.2f} M_tierra")
+                        st.metric(label="Predicción IA", value=f"{pred:.2f} M_tierra", delta=f"{pred-real:.2f}")
+                        
+                        st.markdown(f"""
+                        <div style="background: rgba(255, 255, 255, 0.1); padding: 10px; border-radius: 5px;">
+                            <strong>Margen de Error:</strong> {error_pct:.1f}%
+                        </div>
+                        """, unsafe_allow_html=True)
+
+        # === PROYECTO G: SDSS PHOTO-Z (RED NEURONAL) ===
+        elif project_type == "SDSS_PhotoZ":
+            st.markdown("""
+            ### 🌌 Proyecto G: Estimación de Redshift Fotométrico (Photo-z)
+            **Objetivo:** Entrenar una IA para calcular la distancia ($z$) a galaxias usando solo sus colores ($u,g,r,i,z$).
+            """)
+            
+            # Inputs automáticos SDSS
+            features_sdss = ['u', 'g', 'r', 'i', 'z']
+            target_sdss = 'z' if 'z' in cols else 'redshift'
+            
+            col_sdss_conf, col_sdss_res = st.columns(2)
+            
+            with col_sdss_conf:
+                st.markdown("#### Configuración")
+                st.write(f"**Features:** {features_sdss}")
+                st.write(f"**Objetivo:** {target_sdss}")
+                
+                neuronas = st.slider("Neuronas por Capa", 20, 200, 100)
+                
+                if st.button("🚀 Calcular Photo-z", use_container_width=True):
+                    # Preproceso
+                    data_z = df[features_sdss + [target_sdss]].dropna()
+                    # Limpiar datos malos (z < 0 o magnitudes extremas)
+                    data_z = data_z[(data_z[target_sdss] > 0) & (data_z[target_sdss] < 1)] 
+                    
+                    X = data_z[features_sdss]
+                    y = data_z[target_sdss]
+                    
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                    
+                    scaler = StandardScaler()
+                    X_train_s = scaler.fit_transform(X_train)
+                    X_test_s = scaler.transform(X_test)
+                    
+                    model_z = MLPRegressor(hidden_layer_sizes=(neuronas, neuronas, neuronas//2), 
+                                         max_iter=500, random_state=42)
+                    
+                    with st.spinner("Aprendiendo la estructura del universo..."):
+                        model_z.fit(X_train_s, y_train)
+                        
+                    y_pred = model_z.predict(X_test_s)
+                    r2 = r2_score(y_test, y_pred)
+                    mse = mean_squared_error(y_test, y_pred)
+                    
+                    st.session_state.ml_sdss_res = {'y_test': y_test, 'y_pred': y_pred, 'r2': r2, 'mse': mse}
+                    st.success(f"Modelo entrenado. R²: {r2:.4f}")
+
+            with col_sdss_res:
+                if 'ml_sdss_res' in st.session_state:
+                    res = st.session_state.ml_sdss_res
+                    fig_z = px.scatter(x=res['y_test'], y=res['y_pred'], opacity=0.5,
+                                     labels={'x': 'Redshift Espectroscópico (Real)', 'y': 'Photo-z (IA)'},
+                                     title="Calidad de la Estimación Photo-z")
+                    fig_z.add_shape(type="line", x0=0, y0=0, x1=1, y1=1, line=dict(color="red"))
+                    fig_z.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_z, use_container_width=True)
+                    
+                    st.info(f"Error Medio Cuadrático (MSE): {res['mse']:.5f}")
+
+        # === PROYECTO C: CLASIFICACIÓN DESI (COLOR-COLOR) ===
+        elif project_type == "DeepSpace_Clustering":
+            st.markdown("""
+            ### 🔭 Proyecto C: Clasificación Espectral (Deep Space)
+            **Objetivo:** Separar Estrellas, Galaxias y Quásares usando diagramas de color ($g-r$ vs $r-z$).
+            """)
+            
+            # Asegurar que existen colores
+            calc_instance = Calculos_cls()
+            if 'color_g_r' not in df.columns:
+                df, _ = calc_instance.aplicar_fotometria_desi(df)
+            
+            col_viz_desi, col_conf_desi = st.columns([2, 1])
+            
+            with col_conf_desi:
+                st.markdown("#### Parámetros")
+                k_desi = st.slider("Grupos Esperados", 2, 5, 3, help="Tip: 3 grupos suelen ser Estrellas, Galaxias Rojas y Azules")
+                if st.button("🎨 Analizar Espectro", use_container_width=True):
+                    cols_color = ['color_g_r', 'color_r_z']
+                    data_color = df[cols_color].dropna()
+                    
+                    kmeans = KMeans(n_clusters=k_desi, random_state=42)
+                    labels = kmeans.fit_predict(data_color)
+                    
+                    df.loc[data_color.index, 'Spectral_Cluster'] = labels.astype(str)
+                    st.session_state.datos_actuales = df # Guardar en sesión
+                    st.success("Clasificación completada.")
+
+            with col_viz_desi:
+                if 'Spectral_Cluster' in df.columns:
+                    fig_color = px.scatter(df, x="color_g_r", y="color_r_z",
+                                         color="Spectral_Cluster", opacity=0.6,
+                                         title="Diagrama Color-Color Clasificado",
+                                         labels={'color_g_r': 'Color g-r', 'color_r_z': 'Color r-z'})
+                    fig_color.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_color, use_container_width=True)
+
+        # === OPCIÓN GENÉRICA ===
+        else:
+            st.info("No se detectó un dataset especializado conocido. Usa el modo genérico.")
+            # (Aquí podrías poner un selector genérico de X/Y si quisieras)
+
+# === PÁGINA REPORTE ===
+elif pagina == "📃 Reporte":
+    st.markdown("<h1>📃 Último Reporte</h1>", unsafe_allow_html=True)
+    
+    if 'ultimo_reporte' in st.session_state.metadatos and st.session_state.metadatos['ultimo_reporte']:
+        st.markdown("""
+            <div style="background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3); 
+                        border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem;">
+                <h3 style="color: #00e5ff; margin-bottom: 1rem;">📄 Reporte del Último Análisis</h3>
+            </div>
+        """, unsafe_allow_html=True)
+        st.code(st.session_state.metadatos['ultimo_reporte'], language="text")
+        
+        # Botón para descargar
+        report_text = st.session_state.metadatos['ultimo_reporte']
+        st.download_button(
+            label="⬇️ Descargar Reporte",
+            data=report_text,
+            file_name="reporte_astroquipu.txt",
+            mime="text/plain",
+            use_container_width=True
         )
-        
-        if datos is not None:
-            st.session_state.csv_data = datos.to_dict('records')
-            st.session_state.fuente_actual = fuente
-            st.success(f'✅ Cargados {len(datos)} registros desde {fuente}')
-        
-        st.session_state.pending_query = None
-        st.rerun()
+    else:
+        st.info("📭 No se ha generado ningún reporte de cálculo aún. Realiza un análisis en la sección de Cálculos.")
 
-
-# Otras páginas (placeholder)
-elif st.session_state.current_page == 'mis_analisis':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>📁 Mis Análisis</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-
-elif st.session_state.current_page == 'aprende':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>🎓 Aprende del Universo</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-
-elif st.session_state.current_page == 'simula':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>🌠 Simula el Universo</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-
-elif st.session_state.current_page == 'perfil':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>👤 Mi Perfil</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-
-elif st.session_state.current_page == 'descripcion':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>📖 Descripción</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-
-elif st.session_state.current_page == 'funciones':
-    st.markdown('<div style="color: white; padding: 2rem;"><h1>⚙️ Funciones</h1></div>', unsafe_allow_html=True)
-    if st.button("← Volver"):
-        st.session_state.current_page = 'orbital'
-        st.rerun()
-# Prueba rápida (ejecutar en terminal Python)
-from app import ejecutar_rutina_database
-
-# Intentar cargar archivos locales
-datos, fuente = ejecutar_rutina_database(opcion=1)
-print(f"Fuente: {fuente}")
-print(f"Datos cargados: {len(datos)} registros")
-
+# --- FOOTER ---
+st.markdown("""
+    <div style='text-align: center; padding: 2rem 0; margin-top: 2rem; 
+                border-top: 1px solid rgba(0, 229, 255, 0.2);'>
+        <p style='color: rgba(224, 247, 250, 0.6); font-size: 0.9rem;'>
+            🌌 <strong>AstroQuipu</strong> - Sistema de Análisis Astronómico
+        </p>
+        <p style='color: rgba(224, 247, 250, 0.4); font-size: 0.8rem;'>
+            Desarrollado con ❤️ para la astronomía
+        </p>
+    </div>
+""", unsafe_allow_html=True)

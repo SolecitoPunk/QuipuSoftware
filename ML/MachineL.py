@@ -5,10 +5,9 @@ class MenuML:
     """
     Una clase para mostrar un menú y lanzar los módulos de Machine Learning.
     """
-    def mostrar_menu(self, dataframe=None):
+    def mostrar_menu(self):
         """
         Muestra el menú principal de Machine Learning y maneja la selección del usuario.
-        Acepta un dataframe opcional para pasarlo a los submódulos.
         """
         while True:
             print("\n--- Menú Principal de Machine Learning ---")
@@ -21,9 +20,8 @@ class MenuML:
             if opcion == "1":
                 print("\n--- Lanzando Módulo de Clustering ---")
                 try:
+                    # Instanciar y ejecutar el menú de clustering
                     analizador_cluster = AnalisisDatos()
-                    if dataframe is not None:
-                        analizador_cluster.set_datos(dataframe)
                     analizador_cluster.menu()
                 except Exception as e:
                     print(f"ERROR al ejecutar el módulo de Clustering: {e}")
@@ -32,9 +30,8 @@ class MenuML:
             elif opcion == "2":
                 print("\n--- Lanzando Módulo de Regresión con Red Neuronal ---")
                 try:
+                    # Instanciar y ejecutar el menú de regresión NN
                     analizador_nn = AnalisisRegresionNN()
-                    if dataframe is not None:
-                        analizador_nn.set_datos(dataframe)
                     analizador_nn.menu()
                 except Exception as e:
                     print(f"ERROR al ejecutar el módulo de Regresión NN: {e}")

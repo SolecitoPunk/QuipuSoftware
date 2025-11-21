@@ -10,8 +10,9 @@ import os
 import time
 import sys
 
-# Agregar el directorio padre al path
+# Agregar el directorio padre al path para importar Rutina
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Routines.rutinas import Rutina
 
 class AnalisisRegresionNN:
     """
@@ -28,35 +29,35 @@ class AnalisisRegresionNN:
         self.feature_name, self.target_name = None, None
         self.model = None
         self.history = None
+        self.rutina = Rutina()
         # Los escaladores son cruciales para desescalar al graficar
         self.scaler_X = StandardScaler()
         self.scaler_y = StandardScaler() 
         self.hiperparametros = {} # Almacena los hiperparámetros del último entrenamiento
 
-    def set_datos(self, dataframe):
-        """
-        Establece el dataframe de datos desde una fuente externa.
-        """
-        if dataframe is not None and not dataframe.empty:
-            self.df = dataframe
-            self.columnas_disponibles = self.df.select_dtypes(include=np.number).columns.tolist()
-            if len(self.columnas_disponibles) < 2:
-                print("ADVERTENCIA: Los datos cargados tienen menos de dos columnas numéricas.")
-                self.df = None # Invalidar datos
-            else:
-                print("\nDatos externos cargados en el módulo de Regresión NN.")
-        else:
-            print("ADVERTENCIA: Se intentó cargar un dataframe vacío o nulo.")
-
     def cargar_datos(self):
-        """
-        Verifica si los datos ya están cargados. Si no, instruye al usuario.
-        """
-        if self.df is not None:
-            print("Utilizando datos ya cargados.")
-            return True
-        else:
-            print("\nNo hay datos cargados. Por favor, cargue datos desde el menú principal.")
+        """Utiliza el módulo de rutinas para cargar datos desde diversas fuentes."""
+        self.rutina.menuPrincipal()
+        try:
+            opcion = int(input("\nSeleccione una opción de fuente de datos (0-5): "))
+            if opcion == 0:
+                return False
+            
+            exito = self.rutina.cargarDatos(opcion)
+
+            if exito:
+                self.df = self.rutina.datos_actuales
+                self.columnas_disponibles = self.df.select_dtypes(include=np.number).columns.tolist()
+                if len(self.columnas_disponibles) < 2:
+                    raise ValueError("Los datos cargados deben tener al menos dos columnas numéricas.")
+
+                print("\nDatos cargados exitosamente a través de Rutinas.")
+                return True
+            else:
+                print("No se pudieron cargar los datos desde la fuente seleccionada.")
+                return False
+        except (ValueError, IndexError, KeyboardInterrupt) as e:
+            print(f"\nOperación cancelada o error: {e}")
             return False
 
     def seleccionar_y_preparar_datos(self):
